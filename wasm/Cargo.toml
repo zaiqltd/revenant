@@ -1,0 +1,11 @@
+[package]
+name = "revenant-wasm"
+version = "0.1.0"
+edition = "2021"
+description = "REVENANT wasm bindings: a flat C-ABI over the emulator core"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+revenant-core = { path = "../core" }

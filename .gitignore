@@ -1,0 +1,9 @@
+/target
+**/*.rs.bk
+*.sav
+*.png.actual
+web/revenant_bg.wasm
+web/pkg
+node_modules
+.DS_Store
+roms/games/

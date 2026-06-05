@@ -1,0 +1,12 @@
+[package]
+name = "revenant-core"
+version = "0.1.0"
+edition = "2021"
+description = "REVENANT: a cycle-accurate Game Boy / Game Boy Color emulator core"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+
+[dev-dependencies]

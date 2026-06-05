@@ -2,216 +2,151 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>REVENANT — Game Boy, resurrected at the gate level</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>REVENANT — a gate-level Game Boy, in your browser</title>
 <style>
-  :root { --bg:#0b0e13; --panel:#141a22; --edge:#1f2935; --txt:#c7d2dd; --dim:#6b7a8c;
-          --accent:#7dff9b; --accent2:#37e0c8; --warn:#ffcf5c; }
-  * { box-sizing:border-box; }
-  html,body { margin:0; height:100%; background:radial-gradient(1200px 700px at 50% -10%, #16202c, var(--bg));
-              color:var(--txt); font:14px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
-  .wrap { max-width:1040px; margin:0 auto; padding:28px 20px 60px; }
-  header { display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; margin-bottom:6px; }
-  h1 { font-size:26px; letter-spacing:.16em; margin:0; color:#eaf2fb; font-weight:700; }
+  :root { --bg:#0a0d12; --panel:#141a22; --edge:#202a36; --txt:#c7d2dd; --dim:#76859a;
+          --accent:#7dff9b; --accent2:#37e0c8; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; min-height:100%; background:radial-gradient(1100px 640px at 50% -12%, #16212e, var(--bg));
+              color:var(--txt); font:14px/1.55 ui-monospace,"SF Mono",Menlo,Consolas,monospace; }
+  .wrap { max-width:1000px; margin:0 auto; padding:24px 18px 70px; }
+  header { display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+  h1 { font-size:24px; letter-spacing:.18em; margin:0; color:#eaf2fb; font-weight:800; }
   h1 b { color:var(--accent); }
-  .tag { color:var(--dim); font-size:12px; letter-spacing:.04em; }
-  .badge { margin-left:auto; padding:4px 10px; border:1px solid var(--edge); border-radius:20px;
-           color:var(--accent); font-size:12px; background:#0e141b; }
-  .grid { display:grid; grid-template-columns: minmax(0,1fr) 320px; gap:22px; margin-top:20px; }
-  @media (max-width:880px){ .grid{ grid-template-columns:1fr; } }
+  .sub { color:var(--dim); font-size:12px; }
+  .badge { margin-left:auto; padding:5px 11px; border:1px solid var(--edge); border-radius:20px;
+           color:var(--accent); font-size:12px; background:#0e141b; text-decoration:none; }
+  .badge:hover { border-color:var(--accent); }
 
-  .screen-card { background:var(--panel); border:1px solid var(--edge); border-radius:14px; padding:18px;
-                 box-shadow:0 20px 60px rgba(0,0,0,.45); }
-  .lcd-frame { background:#0a0d11; border-radius:10px; padding:16px; display:flex; justify-content:center;
-               position:relative; }
-  .lcd { position:relative; width:480px; height:432px; max-width:100%; aspect-ratio:160/144; }
-  canvas { width:100%; height:100%; image-rendering:pixelated; border-radius:4px;
-           background:#0f1814; box-shadow:0 0 0 1px #000, 0 0 38px rgba(125,255,155,.10) inset; }
-  /* dot-matrix grid overlay for the authentic LCD look */
-  .lcd::after { content:""; position:absolute; inset:0; pointer-events:none; border-radius:4px;
-    background:
-      repeating-linear-gradient(0deg, rgba(0,0,0,.10) 0 2px, transparent 2px 3px),
-      repeating-linear-gradient(90deg, rgba(0,0,0,.10) 0 2px, transparent 2px 3px);
-    mix-blend-mode:multiply; opacity:.5; }
-  .dropnote { position:absolute; inset:16px; display:flex; align-items:center; justify-content:center;
-    text-align:center; color:var(--dim); font-size:13px; letter-spacing:.05em; pointer-events:none; }
-  .controls { display:flex; gap:10px; align-items:center; margin-top:14px; flex-wrap:wrap; }
-  button, label.file { background:#10202a; color:var(--accent2); border:1px solid var(--edge); border-radius:8px;
-           padding:9px 14px; cursor:pointer; font:inherit; letter-spacing:.03em; }
-  button:hover, label.file:hover { border-color:var(--accent2); color:#bff7ee; }
-  button:disabled { opacity:.4; cursor:default; }
-  label.file input { display:none; }
-  .keys { color:var(--dim); font-size:12px; margin-top:10px; }
-  .keys b { color:var(--txt); font-weight:600; }
+  /* ---- catalog ---- */
+  .lead { color:var(--dim); margin:18px 2px 16px; font-size:13px; }
+  #grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:16px; }
+  .card { text-align:left; background:var(--panel); border:1px solid var(--edge); border-radius:14px;
+          padding:14px; cursor:pointer; color:inherit; font:inherit; display:flex; gap:13px; align-items:center;
+          transition:border-color .15s, transform .08s; }
+  .card:hover { border-color:var(--accent,--accent2); transform:translateY(-2px); }
+  .card:active { transform:translateY(0); }
+  .thumb { width:54px; height:54px; flex:none; border-radius:10px; display:grid; place-items:center;
+           background:linear-gradient(150deg, color-mix(in srgb, var(--a,#7dff9b) 35%, #0e141b), #0e141b);
+           border:1px solid var(--edge); }
+  .thumb span { font-size:26px; font-weight:800; color:var(--a,#7dff9b); }
+  .thumb.byo { background:#0e141b; } .thumb.byo span { color:var(--accent2); }
+  .ctitle { font-weight:700; color:#eef4fb; }
+  .ctitle i { font-style:normal; color:var(--dim); font-size:10px; border:1px solid var(--edge);
+              padding:1px 6px; border-radius:10px; margin-left:6px; vertical-align:1px; }
+  .cdesc { color:var(--dim); font-size:12px; margin:3px 0 5px; }
+  .cctrl { color:var(--accent2); font-size:11px; }
+  .own { border-style:dashed; }
 
-  .side { display:flex; flex-direction:column; gap:18px; }
-  .panel { background:var(--panel); border:1px solid var(--edge); border-radius:14px; padding:16px; }
-  .panel h2 { font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:var(--dim);
-              margin:0 0 12px; font-weight:700; }
-  .regs { display:grid; grid-template-columns:repeat(2,1fr); gap:6px 16px; }
-  .reg { display:flex; justify-content:space-between; }
-  .reg .k { color:var(--dim); } .reg .v { color:var(--accent); }
-  .flags { margin-top:12px; color:var(--dim); font-size:12px; display:flex; gap:12px; flex-wrap:wrap; }
-  .flags span b { color:var(--txt); }
-  .stat-row { display:flex; justify-content:space-between; padding:3px 0; border-bottom:1px dashed #1d2733; }
-  .stat-row:last-child{ border-bottom:0; } .stat-row .v{ color:var(--accent2); }
-  footer { color:var(--dim); font-size:12px; margin-top:30px; line-height:1.7; }
+  /* ---- player ---- */
+  #player { margin-top:8px; }
+  .ptop { display:flex; align-items:center; gap:12px; margin-bottom:14px; flex-wrap:wrap; }
+  .now { font-weight:700; color:#eef4fb; } .nowc { color:var(--dim); font-size:12px; }
+  button.btn { background:#10202a; color:var(--accent2); border:1px solid var(--edge); border-radius:9px;
+               padding:8px 13px; cursor:pointer; font:inherit; }
+  button.btn:hover { border-color:var(--accent2); }
+  .stage { display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:20px; align-items:start; }
+  @media (max-width:860px){ .stage{ grid-template-columns:1fr; } }
+  .lcd-card { background:var(--panel); border:1px solid var(--edge); border-radius:16px; padding:16px; }
+  .lcd-frame { background:#080b0e; border-radius:12px; padding:14px; display:flex; justify-content:center; }
+  .lcd { position:relative; width:100%; max-width:420px; aspect-ratio:160/144; }
+  canvas { width:100%; height:100%; image-rendering:pixelated; border-radius:5px; background:#0f1814;
+           box-shadow:0 0 0 1px #000, 0 0 34px rgba(125,255,155,.10) inset; display:block; }
+  .lcd::after { content:""; position:absolute; inset:0; border-radius:5px; pointer-events:none; opacity:.45;
+    mix-blend-mode:multiply; background:
+      repeating-linear-gradient(0deg, rgba(0,0,0,.12) 0 2px, transparent 2px 3px),
+      repeating-linear-gradient(90deg, rgba(0,0,0,.12) 0 2px, transparent 2px 3px); }
+
+  .side { display:flex; flex-direction:column; gap:16px; }
+  .panel { background:var(--panel); border:1px solid var(--edge); border-radius:14px; padding:14px; }
+  .panel h2 { font-size:10px; letter-spacing:.2em; text-transform:uppercase; color:var(--dim); margin:0 0 10px; }
+  #regs { font-size:11.5px; line-height:1.9; color:var(--accent2); word-spacing:1px; }
+  #regs b { color:var(--dim); font-weight:600; }
+  .keyhint { color:var(--dim); font-size:12px; line-height:1.9; }
+  .keyhint b { color:var(--txt); }
+
+  /* touch pad (mobile) */
+  .pad { display:none; margin-top:16px; justify-content:space-between; align-items:center; gap:18px; }
+  @media (pointer:coarse){ .pad{ display:flex; } }
+  .dpad { display:grid; grid-template-columns:repeat(3,46px); grid-template-rows:repeat(3,46px); gap:4px; }
+  .dpad div { background:#15202b; border:1px solid var(--edge); border-radius:8px; }
+  .dpad .k { display:grid; place-items:center; color:var(--accent2); font-size:18px; user-select:none; }
+  .dpad .k.held { background:#1d3340; }
+  .ab { display:flex; gap:14px; }
+  .rbtn { width:58px; height:58px; border-radius:50%; background:#15202b; border:1px solid var(--edge);
+          color:var(--accent); display:grid; place-items:center; font-weight:800; font-size:18px; user-select:none; }
+  .rbtn.held { background:#1d3340; }
+  .se { display:flex; gap:10px; justify-content:center; margin-top:10px; }
+  .se .pill { padding:6px 14px; border-radius:14px; background:#15202b; border:1px solid var(--edge); color:var(--dim);
+              font-size:11px; user-select:none; } .se .pill.held{ background:#1d3340; }
+
+  footer { color:var(--dim); font-size:12px; margin-top:34px; line-height:1.8; }
   a { color:var(--accent2); text-decoration:none; } a:hover{ text-decoration:underline; }
+  code { color:#bfe9df; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
     <h1>REVE<b>NANT</b></h1>
-    <span class="tag">a gate-level Game Boy / Color emulator · T-cycle accurate · WASM core</span>
-    <span class="badge" id="badge">core: 130/279 gates</span>
+    <span class="sub">a from-scratch, gate-level-accurate Game Boy · Rust → WebAssembly</span>
+    <a class="badge" id="badge" href="https://github.com" target="_blank" rel="noopener">acid2 pixel-perfect · 130/279 gates</a>
   </header>
 
-  <div class="grid">
-    <div class="screen-card">
-      <div class="lcd-frame">
-        <div class="lcd" id="lcd">
-          <canvas id="screen" width="160" height="144"></canvas>
-          <div class="dropnote" id="dropnote">drop a <b>.gb&nbsp;/&nbsp;.gbc</b> ROM here&nbsp;— or use Load ROM</div>
-        </div>
-      </div>
-      <div class="controls">
-        <label class="file">Load ROM<input id="file" type="file" accept=".gb,.gbc,.bin"></label>
-        <button id="pause" disabled>Pause</button>
-        <button id="reset" disabled>Reset</button>
-        <button id="mute">🔊 Sound</button>
-        <span id="title" class="tag"></span>
-      </div>
-      <div class="keys">
-        <b>D-Pad</b> arrows · <b>A</b> X · <b>B</b> Z · <b>Start</b> Enter · <b>Select</b> Shift
-      </div>
-    </div>
+  <!-- CATALOG -->
+  <section id="catalog">
+    <p class="lead">Pick a game — each one is original homebrew, hand-written in Game Boy machine code and
+      running on the emulator core. Or load any <b>.gb / .gbc</b> ROM from your own device.</p>
+    <div id="grid"></div>
+  </section>
 
-    <div class="side">
-      <div class="panel">
-        <h2>CPU · live</h2>
-        <div class="regs" id="regs">
-          <div class="reg"><span class="k">AF</span><span class="v" data-r="AF">----</span></div>
-          <div class="reg"><span class="k">BC</span><span class="v" data-r="BC">----</span></div>
-          <div class="reg"><span class="k">DE</span><span class="v" data-r="DE">----</span></div>
-          <div class="reg"><span class="k">HL</span><span class="v" data-r="HL">----</span></div>
-          <div class="reg"><span class="k">SP</span><span class="v" data-r="SP">----</span></div>
-          <div class="reg"><span class="k">PC</span><span class="v" data-r="PC">----</span></div>
+  <!-- PLAYER -->
+  <section id="player" hidden>
+    <div class="ptop">
+      <button class="btn" id="back">‹ Catalog</button>
+      <span class="now" id="nowtitle"></span><span class="nowc" id="nowcontrols"></span>
+      <span style="margin-left:auto"></span>
+      <button class="btn" id="pause">Pause</button>
+      <button class="btn" id="reset">Reset</button>
+      <button class="btn" id="mute">🔊</button>
+    </div>
+    <div class="stage">
+      <div class="lcd-card">
+        <div class="lcd-frame"><div class="lcd"><canvas id="screen" width="160" height="144" tabindex="0"></canvas></div></div>
+        <div class="pad">
+          <div class="dpad">
+            <div></div><div class="k" data-btn="2">▲</div><div></div>
+            <div class="k" data-btn="1">◀</div><div></div><div class="k" data-btn="0">▶</div>
+            <div></div><div class="k" data-btn="3">▼</div><div></div>
+          </div>
+          <div class="ab"><div class="rbtn" data-btn="5">B</div><div class="rbtn" data-btn="4">A</div></div>
         </div>
-        <div class="flags" id="flags">
-          <span>IME <b data-r="IME">-</b></span><span>HALT <b data-r="HALT">-</b></span>
-          <span>IF <b data-r="IF">--</b></span><span>IE <b data-r="IE">--</b></span>
+        <div class="se">
+          <div class="pill" data-btn="6">SELECT</div><div class="pill" data-btn="7">START</div>
         </div>
       </div>
-      <div class="panel">
-        <h2>PPU / system</h2>
-        <div class="stat-row"><span>PPU mode</span><span class="v" data-r="MODE">-</span></div>
-        <div class="stat-row"><span>LY (scanline)</span><span class="v" data-r="LY">-</span></div>
-        <div class="stat-row"><span>LCDC</span><span class="v" data-r="LCDC">--</span></div>
-        <div class="stat-row"><span>double-speed</span><span class="v" data-r="DSPEED">-</span></div>
-        <div class="stat-row"><span>frames / sec</span><span class="v" data-r="fps">0</span></div>
-      </div>
-      <div class="panel">
-        <h2>About</h2>
-        <div class="tag" style="line-height:1.7">
-          Every chip written from scratch in Rust → WebAssembly: SM83 CPU stepped on the
-          4.194304&nbsp;MHz clock, a true pixel-FIFO PPU (acid2 pixel-perfect), 4-channel APU,
-          MBC1/2/3/5 + RTC, CGB double-speed &amp; HDMA. Identical input → byte-identical frames.
+      <div class="side">
+        <div class="panel">
+          <h2>Live CPU / PPU</h2>
+          <div id="regs">—</div>
+        </div>
+        <div class="panel">
+          <h2>Keyboard</h2>
+          <div class="keyhint"><b>D-Pad</b> arrows · <b>A</b> X · <b>B</b> Z · <b>Start</b> Enter ·
+            <b>Select</b> Shift · <b>Esc</b> back to catalog</div>
         </div>
       </div>
     </div>
-  </div>
+  </section>
 
   <footer>
-    Run locally: <code>cd web &amp;&amp; python -m http.server 8080</code> → open
-    <code>http://localhost:8080</code>. Battery saves persist in your browser per-cartridge.
-    The accuracy scoreboard lives in <code>SCORECARD.md</code>.
+    Every chip written from scratch in Rust: a T-cycle-accurate SM83 CPU, a true pixel-FIFO PPU
+    (<b>acid2 renders pixel-perfect</b>), a 4-channel APU, MBC1/2/3/5 + RTC, CGB double-speed &amp; HDMA.
+    Identical input → byte-identical frames. &nbsp;·&nbsp; Run locally: <code>./web/build.sh &amp;&amp;
+    cd web &amp;&amp; python -m http.server 8080</code>.
   </footer>
 </div>
-
-<script type="module">
-import { Revenant, WIDTH, HEIGHT, KEYMAP } from './revenant.js';
-
-const canvas = document.getElementById('screen');
-const cctx = canvas.getContext('2d', { alpha:false });
-const img = cctx.createImageData(WIDTH, HEIGHT);
-const fileEl = document.getElementById('file');
-const pauseBtn = document.getElementById('pause');
-const resetBtn = document.getElementById('reset');
-const muteBtn = document.getElementById('mute');
-const titleEl = document.getElementById('title');
-const dropnote = document.getElementById('dropnote');
-const lcd = document.getElementById('lcd');
-const regEls = {};
-document.querySelectorAll('[data-r]').forEach(e => (regEls[e.dataset.r] ||= []).push(e));
-
-const rev = new Revenant();
-let muted = false, ready = false;
-
-const hx = (v, w) => v.toString(16).toUpperCase().padStart(w, '0');
-rev.onframe = (s) => {
-  if (!s) return;
-  const set = (k, val) => (regEls[k] || []).forEach(e => e.textContent = val);
-  set('AF', hx(s.AF,4)); set('BC', hx(s.BC,4)); set('DE', hx(s.DE,4));
-  set('HL', hx(s.HL,4)); set('SP', hx(s.SP,4)); set('PC', hx(s.PC,4));
-  set('IME', s.IME ? '1':'0'); set('HALT', s.HALT ? '1':'0');
-  set('IF', hx(s.IF,2)); set('IE', hx(s.IE,2));
-  set('MODE', s.MODE); set('LY', s.LY); set('LCDC', hx(s.LCDC,2));
-  set('DSPEED', s.DSPEED ? '2×':'1×'); set('fps', s.fps);
-};
-
-function render(fb) {
-  img.data.set(fb);
-  cctx.putImageData(img, 0, 0);
-}
-
-async function boot() {
-  await rev.load('revenant.wasm');
-  ready = true;
-}
-boot();
-
-async function startRom(bytes) {
-  if (!ready) await boot();
-  rev.initAudio();
-  if (rev.audioCtx.state === 'suspended') rev.audioCtx.resume();
-  const isCgb = rev.loadRom(bytes);
-  titleEl.textContent = (isCgb ? 'CGB' : 'DMG') + ' · running';
-  dropnote.style.display = 'none';
-  pauseBtn.disabled = resetBtn.disabled = false;
-  pauseBtn.textContent = 'Pause';
-  rev.running = false;            // (re)start cleanly
-  rev.start(render);
-}
-
-fileEl.addEventListener('change', async (e) => {
-  const f = e.target.files[0]; if (!f) return;
-  startRom(new Uint8Array(await f.arrayBuffer()));
-});
-// Optional ?rom=<url> auto-load (shareable links / demos).
-(async () => {
-  const r = new URLSearchParams(location.search).get('rom');
-  if (!r) return;
-  try { const b = await (await fetch(r)).arrayBuffer(); startRom(new Uint8Array(b)); }
-  catch (err) { titleEl.textContent = 'could not load ' + r; }
-})();
-// drag & drop
-['dragover','drop'].forEach(t => lcd.addEventListener(t, e => { e.preventDefault();
-  if (t==='drop' && e.dataTransfer.files[0]) e.dataTransfer.files[0].arrayBuffer().then(b=>startRom(new Uint8Array(b))); }));
-
-pauseBtn.addEventListener('click', () => {
-  if (rev.running) { rev.pause(); pauseBtn.textContent = 'Resume'; }
-  else { rev.resume(); pauseBtn.textContent = 'Pause'; }
-});
-resetBtn.addEventListener('click', () => rev.reset());
-muteBtn.addEventListener('click', () => {
-  muted = !muted;
-  if (rev.audioCtx) (muted ? rev.audioCtx.suspend() : rev.audioCtx.resume());
-  muteBtn.textContent = muted ? '🔇 Muted' : '🔊 Sound';
-});
-
-addEventListener('keydown', (e) => { if (e.code in KEYMAP) { rev.setButton(KEYMAP[e.code], true); e.preventDefault(); } });
-addEventListener('keyup',   (e) => { if (e.code in KEYMAP) { rev.setButton(KEYMAP[e.code], false); e.preventDefault(); } });
-</script>
+<script type="module" src="./games.js"></script>
 </body>
 </html>

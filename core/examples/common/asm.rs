@@ -126,6 +126,39 @@ impl Asm {
     pub fn ei(&mut self) -> &mut Self { self.op(0xFB) }
     pub fn nop(&mut self) -> &mut Self { self.op(0x00) }
 
+    // ---- sound ----
+    /// Power the APU on at full volume, both channels panned to both sides.
+    pub fn apu_on(&mut self) -> &mut Self {
+        self.ld_a(0x80).ldh_to(0x26)   // NR52: APU on
+            .ld_a(0x77).ldh_to(0x24)   // NR50: max master volume L+R
+            .ld_a(0xFF).ldh_to(0x25)   // NR51: all channels to both sides
+    }
+    /// Trigger a short blip on channel 1. `freq` is the 11-bit period (higher =
+    /// higher pitch), `env` an NR12 envelope (e.g. 0xF3 = vol 15, decay), `dutylen`
+    /// an NR11 duty+length (e.g. 0x80 = 50% duty). Good for SFX (eat/bounce/die).
+    pub fn tone(&mut self, freq: u16, env: u8, dutylen: u8) -> &mut Self {
+        self.ld_a(0x00).ldh_to(0x10)                              // NR10: no sweep
+            .ld_a(dutylen).ldh_to(0x11)                           // NR11: duty + length
+            .ld_a(env).ldh_to(0x12)                               // NR12: envelope
+            .ld_a(freq as u8).ldh_to(0x13)                        // NR13: freq lo
+            .ld_a(0x80 | ((freq >> 8) as u8 & 7)).ldh_to(0x14)    // NR14: trigger + freq hi
+    }
+
+    // ---- text (8x8 bitmap font) ----
+    /// Copy the bundled font into VRAM tiles $20..$5F (ASCII space..'_'), so a
+    /// BG-map cell set to an ASCII byte renders that character. Requires the game
+    /// to also place the data once: `a.label("FONT"); a.raw(&font_blob());`
+    /// and to run with LCDC tile-data @ $8000 (the default 0x91/0x93).
+    pub fn load_font(&mut self) -> &mut Self { self.memcpy_lbl("FONT", 0x8200, 64 * 16) }
+    /// Write an ASCII string into consecutive BG-map cells starting at `map_addr`.
+    pub fn print(&mut self, map_addr: u16, text: &str) -> &mut Self {
+        for (i, ch) in text.bytes().enumerate() {
+            let c = if (0x20..0x60).contains(&ch) { ch } else { 0x20 };
+            self.ld_a(c).ld_nn_a(map_addr + i as u16);
+        }
+        self
+    }
+
     // ---- high-level macros ----
     /// Wait for exactly one frame (a fresh LY==145 edge). Inline (no call).
     pub fn wait_vblank(&mut self) -> &mut Self {
@@ -180,4 +213,86 @@ pub fn solid_tile(rows: [u8; 8]) -> [u8; 16] {
     let mut t = [0u8; 16];
     for i in 0..8 { t[i * 2] = rows[i]; t[i * 2 + 1] = rows[i]; }
     t
+}
+
+/// Build the 1 KiB font blob: 64 tiles for ASCII $20..$5F, each at color 3.
+/// Original 5x7-in-8x8 glyphs. Place via `a.label("FONT"); a.raw(&font_blob());`
+pub fn font_blob() -> Vec<u8> {
+    // Each glyph is 8 rows of 8 chars; '#' = pixel. Designed on a 5-wide cell.
+    let g = |rows: [&str; 8]| -> [u8; 8] {
+        let mut out = [0u8; 8];
+        for (r, line) in rows.iter().enumerate() {
+            let mut b = 0u8;
+            for (i, ch) in line.bytes().enumerate() { if ch == b'#' { b |= 0x80 >> i; } }
+            out[r] = b;
+        }
+        out
+    };
+    let blank = [0u8; 8];
+    let glyph = |ch: u8| -> [u8; 8] {
+        match ch {
+            b'0' => g([" ### ", "#   #", "#  ##", "# # #", "##  #", "#   #", " ### ", "     "].map_pad()),
+            b'1' => g(["  #  ", " ##  ", "  #  ", "  #  ", "  #  ", "  #  ", " ### ", "     "].map_pad()),
+            b'2' => g([" ### ", "#   #", "    #", "   # ", "  #  ", " #   ", "#####", "     "].map_pad()),
+            b'3' => g(["#### ", "    #", "    #", " ### ", "    #", "    #", "#### ", "     "].map_pad()),
+            b'4' => g(["   # ", "  ## ", " # # ", "#  # ", "#####", "   # ", "   # ", "     "].map_pad()),
+            b'5' => g(["#####", "#    ", "#### ", "    #", "    #", "#   #", " ### ", "     "].map_pad()),
+            b'6' => g([" ### ", "#    ", "#    ", "#### ", "#   #", "#   #", " ### ", "     "].map_pad()),
+            b'7' => g(["#####", "    #", "   # ", "  #  ", " #   ", " #   ", " #   ", "     "].map_pad()),
+            b'8' => g([" ### ", "#   #", "#   #", " ### ", "#   #", "#   #", " ### ", "     "].map_pad()),
+            b'9' => g([" ### ", "#   #", "#   #", " ####", "    #", "    #", " ### ", "     "].map_pad()),
+            b'A' => g([" ### ", "#   #", "#   #", "#####", "#   #", "#   #", "#   #", "     "].map_pad()),
+            b'B' => g(["#### ", "#   #", "#   #", "#### ", "#   #", "#   #", "#### ", "     "].map_pad()),
+            b'C' => g([" ### ", "#   #", "#    ", "#    ", "#    ", "#   #", " ### ", "     "].map_pad()),
+            b'D' => g(["###  ", "#  # ", "#   #", "#   #", "#   #", "#  # ", "###  ", "     "].map_pad()),
+            b'E' => g(["#####", "#    ", "#    ", "#### ", "#    ", "#    ", "#####", "     "].map_pad()),
+            b'F' => g(["#####", "#    ", "#    ", "#### ", "#    ", "#    ", "#    ", "     "].map_pad()),
+            b'G' => g([" ### ", "#   #", "#    ", "# ###", "#   #", "#   #", " ### ", "     "].map_pad()),
+            b'H' => g(["#   #", "#   #", "#   #", "#####", "#   #", "#   #", "#   #", "     "].map_pad()),
+            b'I' => g([" ### ", "  #  ", "  #  ", "  #  ", "  #  ", "  #  ", " ### ", "     "].map_pad()),
+            b'J' => g(["  ###", "   # ", "   # ", "   # ", "#  # ", "#  # ", " ##  ", "     "].map_pad()),
+            b'K' => g(["#   #", "#  # ", "# #  ", "##   ", "# #  ", "#  # ", "#   #", "     "].map_pad()),
+            b'L' => g(["#    ", "#    ", "#    ", "#    ", "#    ", "#    ", "#####", "     "].map_pad()),
+            b'M' => g(["#   #", "## ##", "# # #", "#   #", "#   #", "#   #", "#   #", "     "].map_pad()),
+            b'N' => g(["#   #", "##  #", "# # #", "#  ##", "#   #", "#   #", "#   #", "     "].map_pad()),
+            b'O' => g([" ### ", "#   #", "#   #", "#   #", "#   #", "#   #", " ### ", "     "].map_pad()),
+            b'P' => g(["#### ", "#   #", "#   #", "#### ", "#    ", "#    ", "#    ", "     "].map_pad()),
+            b'Q' => g([" ### ", "#   #", "#   #", "#   #", "# # #", "#  # ", " ## #", "     "].map_pad()),
+            b'R' => g(["#### ", "#   #", "#   #", "#### ", "# #  ", "#  # ", "#   #", "     "].map_pad()),
+            b'S' => g([" ####", "#    ", "#    ", " ### ", "    #", "    #", "#### ", "     "].map_pad()),
+            b'T' => g(["#####", "  #  ", "  #  ", "  #  ", "  #  ", "  #  ", "  #  ", "     "].map_pad()),
+            b'U' => g(["#   #", "#   #", "#   #", "#   #", "#   #", "#   #", " ### ", "     "].map_pad()),
+            b'V' => g(["#   #", "#   #", "#   #", "#   #", "#   #", " # # ", "  #  ", "     "].map_pad()),
+            b'W' => g(["#   #", "#   #", "#   #", "#   #", "# # #", "## ##", "#   #", "     "].map_pad()),
+            b'X' => g(["#   #", "#   #", " # # ", "  #  ", " # # ", "#   #", "#   #", "     "].map_pad()),
+            b'Y' => g(["#   #", "#   #", " # # ", "  #  ", "  #  ", "  #  ", "  #  ", "     "].map_pad()),
+            b'Z' => g(["#####", "    #", "   # ", "  #  ", " #   ", "#    ", "#####", "     "].map_pad()),
+            b'!' => g(["  #  ", "  #  ", "  #  ", "  #  ", "  #  ", "     ", "  #  ", "     "].map_pad()),
+            b'-' => g(["     ", "     ", "     ", "#####", "     ", "     ", "     ", "     "].map_pad()),
+            b'.' => g(["     ", "     ", "     ", "     ", "     ", "     ", "  #  ", "     "].map_pad()),
+            b':' => g(["     ", "  #  ", "     ", "     ", "     ", "  #  ", "     ", "     "].map_pad()),
+            b'/' => g(["    #", "    #", "   # ", "  #  ", " #   ", "#    ", "#    ", "     "].map_pad()),
+            _ => blank,
+        }
+    };
+    let mut out = Vec::with_capacity(64 * 16);
+    for code in 0x20u8..0x60 {
+        for row in glyph(code) { out.push(row); out.push(row); } // lo=hi -> color 3
+    }
+    out
+}
+
+// Helper: pad each 5-char row to the 8-wide field (1px left margin).
+trait Pad { fn map_pad(self) -> [&'static str; 8]; }
+impl Pad for [&'static str; 8] {
+    fn map_pad(self) -> [&'static str; 8] {
+        // Glyphs are authored 5 wide; shift right by 1 column for spacing.
+        const PADDED: [&str; 0] = [];
+        let _ = PADDED;
+        self.map(|s| {
+            // Leak a padded copy (build-time only, tiny, runs in an example binary).
+            let padded = format!(" {s}");
+            Box::leak(padded.into_boxed_str()) as &str
+        })
+    }
 }

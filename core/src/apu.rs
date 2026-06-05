@@ -245,11 +245,23 @@ impl Noise {
         self.timer -= c;
         while self.timer <= 0 {
             self.timer += self.period().max(1);
-            let bit = (self.lfsr ^ (self.lfsr >> 1)) & 1;
-            self.lfsr = (self.lfsr >> 1) | (bit << 14);
-            if self.width7 {
-                self.lfsr = (self.lfsr & !(1 << 6)) | (bit << 6);
+            // Clock shift 14 or 15 stalls the LFSR: the frequency timer keeps
+            // running but the shift register receives no clocks (spec §5 /
+            // gbdev wiki "Obscure Behavior"). The timer still advances so the
+            // channel resumes cleanly once a valid shift is programmed.
+            if self.shift < 14 {
+                self.clock_lfsr();
             }
+        }
+    }
+    fn clock_lfsr(&mut self) {
+        // 15-bit LFSR: XOR the low two bits, shift right, feed the result into
+        // bit 14. In 7-bit (width) mode the same bit is also forced into bit 6
+        // after the shift, collapsing the period to 7 bits (gbdev wiki / spec §5).
+        let bit = (self.lfsr ^ (self.lfsr >> 1)) & 1;
+        self.lfsr = (self.lfsr >> 1) | (bit << 14);
+        if self.width7 {
+            self.lfsr = (self.lfsr & !(1 << 6)) | (bit << 6);
         }
     }
     fn clock_length(&mut self) {

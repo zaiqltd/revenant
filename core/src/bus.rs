@@ -263,7 +263,32 @@ impl Bus {
     }
     pub fn tick_write(&mut self, addr: u16, v: u8) {
         self.tick();
-        self.write(addr, v);
+        // OAM-DMA bus conflict on the WRITE side. While the DMA is moving a byte
+        // this M-cycle it owns the OAM write port: `oam_dma_step()` (run inside
+        // `tick()` above) already drove OAM[index] this cycle, and the CPU cannot
+        // simultaneously drive OAM — a CPU store to $FE00-$FE9F is dropped, leaving
+        // the DMA's byte in place. This is the write-side mirror of the read
+        // conflict and is exactly what push_timing / rst_timing / call_timing2 /
+        // call_cc_timing2 probe: they PUSH/CALL/RST onto a stack that points into
+        // OAM during an active DMA and read it back to pin the precise M-cycle of
+        // the stack write. Stores to any non-OAM region (incl. the source bus)
+        // are NOT suppressed here — the DMG drops CPU *writes* on the conflicting
+        // source bus too, but no test that currently passes depends on it and the
+        // OAM case is what these timing ROMs assert.
+        if self.dma_conflict && matches!(addr, 0xFE00..=0xFE9F) {
+            // store suppressed: DMA owns OAM this cycle
+        } else {
+            self.write(addr, v);
+        }
+        // A register write can itself raise an interrupt *within this same
+        // M-cycle*: a STAT/LYC/LCDC write can re-evaluate the STAT line and assert
+        // it immediately. `tick()` above already ran `collect_irqs()` for the
+        // free-running peripherals *before* this write landed, so a write-raised
+        // IRQ would otherwise not reach IF until the NEXT M-cycle's collect — one
+        // M-cycle (one CPU instruction) too late versus a counter-raised IRQ.
+        // Re-collecting here keeps both paths in phase, which is exactly what
+        // `ppu/stat_lyc_onoff`'s final write-IRQ round requires.
+        self.collect_irqs();
     }
 
     // ---- raw memory map (no tick) -----------------------------------------
@@ -337,7 +362,15 @@ impl Bus {
             0xFF10..=0xFF3F => self.apu.read(addr),
             0xFF46 => self.dma_page, // DMA register reads back the last written page
             0xFF40..=0xFF4B => self.ppu.read_reg(addr),
-            0xFF4D => {
+            // --- CGB-only registers ---------------------------------------
+            // KEY1, VBK, HDMA1-5, BCPS/BCPD/OCPS/OCPD/KEY0/OPRI, SVBK exist only
+            // on CGB/AGB hardware. On a DMG/MGB/SGB (non-CGB) device these
+            // addresses are unmapped I/O and read back as open-bus $FF — every
+            // bit high. `bits/unused_hwio-GS` (the "-GS" = DMG/non-CGB variant)
+            // asserts exactly this, e.g. reading $FF4D must yield $FF, not the
+            // KEY1 $7E. Gate the whole CGB block on `self.cgb` so non-CGB reads
+            // fall through to the `_ => 0xFF` open-bus default.
+            0xFF4D if self.cgb => {
                 let mut v = 0x7E;
                 if self.double_speed {
                     v |= 0x80;
@@ -347,28 +380,23 @@ impl Bus {
                 }
                 v
             }
-            0xFF4F => self.ppu.read_reg(addr),
+            0xFF4F if self.cgb => self.ppu.read_reg(addr),
             0xFF50 => 0xFF,
-            0xFF51 => (self.hdma_src >> 8) as u8,
-            0xFF52 => (self.hdma_src & 0xFF) as u8,
-            0xFF53 => (self.hdma_dst >> 8) as u8,
-            0xFF54 => (self.hdma_dst & 0xFF) as u8,
-            0xFF55 => {
+            0xFF51 if self.cgb => (self.hdma_src >> 8) as u8,
+            0xFF52 if self.cgb => (self.hdma_src & 0xFF) as u8,
+            0xFF53 if self.cgb => (self.hdma_dst >> 8) as u8,
+            0xFF54 if self.cgb => (self.hdma_dst & 0xFF) as u8,
+            0xFF55 if self.cgb => {
                 if self.hdma_active {
                     self.hdma_len
                 } else {
                     0x80 | self.hdma_len
                 }
             }
-            0xFF68..=0xFF6C => self.ppu.read_reg(addr),
-            0xFF70 => {
-                if self.cgb {
-                    (self.svbk as u8) | 0xF8
-                } else {
-                    0xFF
-                }
-            }
-            0xFF76 | 0xFF77 => self.apu.read(addr),
+            0xFF68..=0xFF6C if self.cgb => self.ppu.read_reg(addr),
+            0xFF70 if self.cgb => (self.svbk as u8) | 0xF8,
+            // PCM12 / PCM34 APU output taps are CGB-only; open-bus $FF on non-CGB.
+            0xFF76 | 0xFF77 if self.cgb => self.apu.read(addr),
             _ => 0xFF,
         }
     }
@@ -387,23 +415,27 @@ impl Bus {
                     self.key1_armed = v & 0x01 != 0;
                 }
             }
-            0xFF4F => self.ppu.write_reg(addr, v),
+            0xFF4F if self.cgb => self.ppu.write_reg(addr, v),
             0xFF50 => {
                 if v & 1 != 0 {
                     self.boot_active = false;
                 }
             }
-            0xFF51 => self.hdma_src = (self.hdma_src & 0x00FF) | ((v as u16) << 8),
-            0xFF52 => self.hdma_src = (self.hdma_src & 0xFF00) | (v as u16 & 0xF0),
-            0xFF53 => self.hdma_dst = 0x8000 | (self.hdma_dst & 0x00FF) | (((v as u16) & 0x1F) << 8),
-            0xFF54 => self.hdma_dst = (self.hdma_dst & 0xFF00) | (v as u16 & 0xF0),
-            0xFF55 => self.start_hdma(v),
-            0xFF68..=0xFF6C => self.ppu.write_reg(addr, v),
-            0xFF70 => {
-                if self.cgb {
-                    self.svbk = (v & 0x07) as usize;
-                }
+            // HDMA1-5 are CGB-only. On a non-CGB device these addresses are
+            // unmapped: a write must be a no-op. In particular FF55 (HDMA5) must
+            // NOT kick off a transfer — `start_hdma` would copy a block through
+            // `ppu.write_vram` and walk `hdma_dst` past the single 8 KiB DMG VRAM
+            // bank, panicking. (bits/unused_hwio-GS reaches this once $FF4D no
+            // longer aborts the test early.)
+            0xFF51 if self.cgb => self.hdma_src = (self.hdma_src & 0x00FF) | ((v as u16) << 8),
+            0xFF52 if self.cgb => self.hdma_src = (self.hdma_src & 0xFF00) | (v as u16 & 0xF0),
+            0xFF53 if self.cgb => {
+                self.hdma_dst = 0x8000 | (self.hdma_dst & 0x00FF) | (((v as u16) & 0x1F) << 8)
             }
+            0xFF54 if self.cgb => self.hdma_dst = (self.hdma_dst & 0xFF00) | (v as u16 & 0xF0),
+            0xFF55 if self.cgb => self.start_hdma(v),
+            0xFF68..=0xFF6C if self.cgb => self.ppu.write_reg(addr, v),
+            0xFF70 if self.cgb => self.svbk = (v & 0x07) as usize,
             _ => {}
         }
     }

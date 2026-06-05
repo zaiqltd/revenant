@@ -1,6 +1,6 @@
 # REVENANT — Accuracy Scorecard
 
-**Canonical gate set: passes 120/279**
+**Canonical gate set: passes 126/279**
 
 | Category | Pass | Total |
 |---|---:|---:|
@@ -8,7 +8,7 @@
 | age | 2 | 47 |
 | blargg | 17 | 20 |
 | mealybug | 2 | 24 |
-| mooneye/acceptance | 50 | 75 |
+| mooneye/acceptance | 56 | 75 |
 | mooneye/emulator-only | 28 | 28 |
 | same-suite | 14 | 78 |
 | scribbl | 4 | 4 |
@@ -114,7 +114,7 @@
 | mooneye/acceptance | add_sp_e_timing | ✅ PASS | magic |
 | mooneye/acceptance | bits/mem_oam | ✅ PASS | magic |
 | mooneye/acceptance | bits/reg_f | ✅ PASS | magic |
-| mooneye/acceptance | bits/unused_hwio-GS | ❌ FAIL | regs b=42 c=42 d=42 e=42 h=42 l=42 |
+| mooneye/acceptance | bits/unused_hwio-GS | ✅ PASS | magic |
 | mooneye/acceptance | boot_div-S | ❌ FAIL | regs b=42 c=42 d=42 e=42 h=42 l=42 |
 | mooneye/acceptance | boot_div-dmg0 | ❌ FAIL | regs b=42 c=42 d=42 e=42 h=42 l=42 |
 | mooneye/acceptance | boot_div-dmgABCmgb | ❌ FAIL | regs b=42 c=42 d=42 e=42 h=42 l=42 |
@@ -128,9 +128,9 @@
 | mooneye/acceptance | boot_regs-sgb | ❌ FAIL | regs b=42 c=42 d=42 e=42 h=42 l=42 |
 | mooneye/acceptance | boot_regs-sgb2 | ❌ FAIL | regs b=42 c=42 d=42 e=42 h=42 l=42 |
 | mooneye/acceptance | call_cc_timing | ✅ PASS | magic |
-| mooneye/acceptance | call_cc_timing2 | ❌ FAIL | regs b=42 c=42 d=42 e=42 h=42 l=42 |
+| mooneye/acceptance | call_cc_timing2 | ✅ PASS | magic |
 | mooneye/acceptance | call_timing | ✅ PASS | magic |
-| mooneye/acceptance | call_timing2 | ❌ FAIL | regs b=42 c=42 d=42 e=42 h=42 l=42 |
+| mooneye/acceptance | call_timing2 | ✅ PASS | magic |
 | mooneye/acceptance | di_timing-GS | ✅ PASS | magic |
 | mooneye/acceptance | div_timing | ✅ PASS | magic |
 | mooneye/acceptance | ei_sequence | ✅ PASS | magic |
@@ -163,15 +163,15 @@
 | mooneye/acceptance | ppu/lcdon_timing-GS | ❌ FAIL | regs b=42 c=42 d=42 e=42 h=42 l=42 |
 | mooneye/acceptance | ppu/lcdon_write_timing-GS | ❌ FAIL | regs b=42 c=42 d=42 e=42 h=42 l=42 |
 | mooneye/acceptance | ppu/stat_irq_blocking | ✅ PASS | magic |
-| mooneye/acceptance | ppu/stat_lyc_onoff | ❌ FAIL | regs b=42 c=42 d=42 e=42 h=42 l=42 |
+| mooneye/acceptance | ppu/stat_lyc_onoff | ✅ PASS | magic |
 | mooneye/acceptance | ppu/vblank_stat_intr-GS | ✅ PASS | magic |
-| mooneye/acceptance | push_timing | ❌ FAIL | regs b=42 c=42 d=42 e=42 h=42 l=42 |
+| mooneye/acceptance | push_timing | ✅ PASS | magic |
 | mooneye/acceptance | rapid_di_ei | ✅ PASS | magic |
 | mooneye/acceptance | ret_cc_timing | ✅ PASS | magic |
 | mooneye/acceptance | ret_timing | ✅ PASS | magic |
 | mooneye/acceptance | reti_intr_timing | ✅ PASS | magic |
 | mooneye/acceptance | reti_timing | ✅ PASS | magic |
-| mooneye/acceptance | rst_timing | ❌ FAIL | regs b=42 c=42 d=42 e=42 h=42 l=42 |
+| mooneye/acceptance | rst_timing | ✅ PASS | magic |
 | mooneye/acceptance | serial/boot_sclk_align-dmgABCmgb | ❌ FAIL | regs b=42 c=42 d=42 e=42 h=42 l=42 |
 | mooneye/acceptance | timer/div_write | ✅ PASS | magic |
 | mooneye/acceptance | timer/rapid_toggle | ❌ FAIL | regs b=42 c=42 d=42 e=42 h=42 l=42 |

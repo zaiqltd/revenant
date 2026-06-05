@@ -513,7 +513,7 @@ impl Ppu {
     }
 
     fn read_vram_bank0(&self, addr: u16) -> u8 {
-        self.vram[(addr as usize - 0x8000)]
+        self.vram[addr as usize - 0x8000]
     }
 
     fn cgb_color(&self, pal_ram: &[u8; 64], pal: usize, color: u8) -> [u8; 3] {

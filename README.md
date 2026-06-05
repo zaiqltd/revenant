@@ -6,7 +6,13 @@ Every chip is written by hand, no emulation libraries: a T-cycle-stepped SM83 CP
 
 > **acid2 renders pixel-perfect** (0 / 23040 pixels different from real hardware, on both DMG and CGB) and the suite currently passes **130 / 279** of the canonical accuracy gates. The full scoreboard lives in [`SCORECARD.md`](SCORECARD.md).
 
-<p align="center"><em>dmg-acid2 &nbsp;·&nbsp; cgb-acid2 — REVENANT’s own framebuffer, bit-for-bit identical to reference hardware</em></p>
+<p align="center">
+  <img src="docs/screenshots/acid2.png" width="180" alt="dmg-acid2 pixel-perfect">
+  <img src="docs/screenshots/snake.png" width="180" alt="Snake">
+  <img src="docs/screenshots/blocks.png" width="180" alt="Blocks">
+  <img src="docs/screenshots/blaster.png" width="180" alt="Blaster">
+</p>
+<p align="center"><em>acid2 (pixel-perfect vs real hardware) &nbsp;·&nbsp; and three of the bundled original homebrew games</em></p>
 
 ---
 
@@ -30,11 +36,14 @@ Pick a game from the catalog, or drop in any `.gb` / `.gbc` ROM of your own.
 | Game | What it is | Controls |
 |------|------------|----------|
 | **Snake** | Eat, grow, don’t crash. Walls + self-collision, score, speed-ramp. | D-Pad |
-| **Breakout** | Bounce the ball, clear the bricks. | ← → paddle |
+| **Breakout** | Bounce the ball, clear the bricks. Win on a clean board. | ← → paddle |
+| **Blocks** | Stack the falling blocks; clear full rows. | ← → move · ↓ drop |
+| **Flap** | One-button flap through the gaps. | A / ↑ |
+| **Blaster** | Shoot the wave before it lands. | ← → move · A fire |
 | **Dodge** | Weave between falling blocks; survive. | ← → move |
 | **Hello** | A movable smiley — the first thing this emulator drew. | Arrows |
 
-These are built from `core/examples/make<game>.rs` on top of a tiny shared assembler (`core/examples/common/asm.rs`). They contain no copyrighted content.
+Each has a title screen, an on-screen score, a game-over/retry screen, and sound — all hand-assembled SM83 on a tiny shared assembler (`core/examples/common/asm.rs`, with an original 8×8 font + APU blip helpers). They contain no third-party content.
 
 ---
 

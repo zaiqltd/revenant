@@ -2,10 +2,13 @@
 //!
 //! You are a paddle near the bottom of the screen. Three hazard blocks fall from
 //! the top; slide Left/Right (clamped to both screen edges) to avoid them. Each
-//! hazard that safely passes the bottom respawns at a random X (LFSR) and bumps
-//! your score; the fall speed ramps up slowly as the score climbs. Touch a
-//! hazard and it's game over — the score resets and a fresh run begins. The
-//! score is drawn as three decimal digits along the top BG row.
+//! hazard that safely passes the bottom respawns at a random X (LFSR), plays a
+//! short "tick" and bumps your score; the fall speed ramps up slowly as the
+//! score climbs. Touch a hazard and a low tone plays — GAME OVER shows your
+//! score and "PRESS START" to retry.
+//!
+//! A proper little game: a TITLE screen, sound effects, an on-screen score, and
+//! a clear game-over screen. STATE byte drives the loop (0=title,1=play,2=over).
 //!
 //! Hand-assembled SM83 through the shared two-pass assembler. No copyrighted
 //! content (the boot-logo region is left zero; REVENANT runs from $0100).
@@ -25,6 +28,8 @@ const SPEED: u16 = 0xC005; // current hazard fall speed (pixels/tick)
 const RNG: u16 = 0xC006; // 8-bit LFSR
 const TICK: u16 = 0xC007; // frame divider for game logic
 const RAMP: u16 = 0xC008; // hazards survived since last speed-up
+const STATE: u16 = 0xC009; // 0=title, 1=play, 2=over
+const LASTSTART: u16 = 0xC00A; // previous frame's Start bit (0=was pressed)
 
 // OAM (sprite RAM): 4 bytes each = Y, X, tile, attr. On-screen = (X-8, Y-16).
 const OAM_PLAYER: u16 = 0xFE00; // sprite 0 = player
@@ -40,19 +45,26 @@ const PLAYER_STEP: u8 = 3; // pixels the paddle slides per step
 const MAX_SPEED: u8 = 5; // cap on the fall speed ramp
 const RAMP_EVERY: u8 = 5; // speed up after every N hazards cleared
 
+// BG map cell addresses (0x9800 + row*32 + col).
+const SCORE_AT: u16 = 0x9800 + 0 * 32 + 1; // "SCORE nnn" on the top row, left side
+
 fn main() {
     let mut a = Asm::new();
 
     // ================= one-time setup =================
     a.label("main");
     a.di();
+    a.ld_sp(0xFFFE);
     a.xor_aa().ldh_to(0x40); // LCDC = 0 (LCD off so VRAM is safe to write)
 
-    a.memcpy_lbl("TILES", 0x8000, 16 * 16); // load 16 tiles into $8000
-    a.memset(0x9800, 0, 0x0400); // blank the BG map (tile 0)
+    a.memcpy_lbl("TILES", 0x8000, 16 * 16); // load 16 art tiles into $8000 (indices 0..15)
+    a.load_font(); // font -> tiles $20..$5F
+    a.memset(0x9800, 0x20, 0x0400); // blank the BG map with the font SPACE glyph
 
     a.ld_a(0xE4).ldh_to(0x47); // BGP  = 3,2,1,0
     a.ld_a(0xE4).ldh_to(0x48); // OBP0 = 3,2,1,0
+
+    a.apu_on(); // power up the sound hardware once
 
     a.ldh_from(0x04).or_a(1).ld_nn_a(RNG); // seed LFSR from DIV (force nonzero)
 
@@ -66,11 +78,82 @@ fn main() {
     }
 
     a.ld_a(0x93).ldh_to(0x40); // LCD on, OBJ on, BG on, tiles @ $8000
-    // fall through into restart
 
-    // ================= (re)start a run =================
-    a.label("restart");
+    a.xor_aa().ld_nn_a(STATE); // start on the title screen
+    a.ld_a(1).ld_nn_a(LASTSTART); // assume Start not held at boot
+    a.call("show_title"); // paint the title once
+
+    // ================= main loop =================
+    a.label("loop");
+    a.wait_vblank();
+
+    // Dispatch on STATE every frame.
+    a.ld_a_nn(STATE);
+    a.cp(1).jr(Z_JR, "st_play");
+    a.cp(2).jr(Z_JR, "st_over");
+    // ---- STATE 0: TITLE — wait for a fresh Start press ----
+    a.call("start_edge"); // Z set => Start newly pressed
+    a.jr(NZ_JR, "loop");
+    a.call("begin_run"); // init a fresh run, draw the play field
+    a.jra("loop");
+
+    // ---- STATE 1: PLAY ----
+    a.label("st_play");
+    // Push the live paddle X to OAM every frame for responsive feel.
+    a.ld_a_nn(PX).ld_nn_a(OAM_PLAYER + 1);
+    // Throttle game logic to every TICKS_PER_STEP frames.
+    a.ld_a_nn(TICK).inc_r(A).ld_nn_a(TICK);
+    a.cp(TICKS_PER_STEP).jr(C_JR, "loop"); // TICK<N -> keep drawing only
+    a.xor_aa().ld_nn_a(TICK);
+    a.call("input");
+    a.call("fall"); // move hazards, score, respawn (tick SFX on a clear)
+    a.call("collide"); // AABB test -> game over on a hit
+    a.jra("loop");
+
+    // ---- STATE 2: GAME OVER — wait for a fresh Start press to retry ----
+    a.label("st_over");
+    a.call("start_edge");
+    a.jr(NZ_JR, "loop");
+    a.call("begin_run"); // Start retries straight into a fresh run
+    a.jra("loop");
+
+    // ================= start_edge: Z if Start was just pressed this frame ===
+    // Reads buttons, edge-detects bit3 (Start) against LASTSTART. Returns with
+    // the Z flag SET when a new press happened (was high, now low).
+    a.label("start_edge");
+    a.ld_a(0x10).ldh_to(0x00); // select buttons
+    a.ldh_from(0x00).ldh_from(0x00); // read twice to settle the matrix
+    a.and_a(0x08); // isolate Start (bit3): 0=pressed
+    a.ld_r_r(C, A); // c = current Start bit
+    // newly pressed = (now == 0) AND (last == 1)
+    a.ld_a_nn(LASTSTART); // a = last bit (0 or 8)
+    a.ld_r_r(B, A); // b = last
+    a.ld_r_r(A, C).ld_nn_a(LASTSTART); // store current as next frame's "last"
+    // edge if current==0 and last!=0
+    a.ld_r_r(A, C).or_r(A).jr(NZ_JR, "se_no"); // current!=0 -> not pressed
+    a.ld_r_r(A, B).or_r(A).jr(Z_JR, "se_no"); // last==0 (held) -> not an edge
+    a.xor_aa(); // set Z (a=0 -> Z=1) => edge!
+    a.ret();
+    a.label("se_no");
+    a.or_a(1); // clear Z (a!=0) => no edge
+    a.ret();
+
+    // ================= show_title: paint the TITLE screen =================
+    a.label("show_title");
+    a.call("clear_map");
+    a.print(0x9800 + 5 * 32 + 7, "DODGE");
+    a.print(0x9800 + 7 * 32 + 4, "DODGE THE BLOCKS");
+    a.print(0x9800 + 12 * 32 + 4, "PRESS START");
+    a.call("hide_haz"); // tuck hazards off-screen so the title is clean
+    // keep the player paddle parked but visible-low; move it off too for clarity
+    a.ld_a(0).ld_nn_a(OAM_PLAYER + 1); // X=0 -> fully off-screen (X-8)
+    a.ret();
+
+    // ================= begin_run: (re)start a fresh play run =================
+    a.label("begin_run");
+    a.call("clear_map");
     a.ld_a(84).ld_nn_a(PX); // centre the paddle
+    a.ld_a_nn(PX).ld_nn_a(OAM_PLAYER + 1); // and show it immediately
     a.xor_aa().ld_nn_a(D0); // score digits -> 0
     a.xor_aa().ld_nn_a(D1);
     a.xor_aa().ld_nn_a(D2);
@@ -86,24 +169,10 @@ fn main() {
         a.ld_a(starts[i].0).ld_nn_a(h + 1); // X
     }
 
+    a.print(SCORE_AT, "SCORE"); // static label
     a.call("drawscore"); // paint the initial 000
-
-    // ================= main loop =================
-    a.label("loop");
-    a.wait_vblank();
-
-    // Push the live paddle X to OAM every frame for responsive feel.
-    a.ld_a_nn(PX).ld_nn_a(OAM_PLAYER + 1);
-
-    // Throttle game logic to every TICKS_PER_STEP frames.
-    a.ld_a_nn(TICK).inc_r(A).ld_nn_a(TICK);
-    a.cp(TICKS_PER_STEP).jr(C_JR, "loop"); // TICK<N -> keep drawing only
-    a.xor_aa().ld_nn_a(TICK);
-
-    a.call("input");
-    a.call("fall"); // move hazards, score, respawn
-    a.call("collide"); // AABB test -> jumps to restart on a hit
-    a.jra("loop");
+    a.ld_a(1).ld_nn_a(STATE); // -> PLAY
+    a.ret();
 
     // ================= input: D-pad -> move paddle, clamp both edges =====
     a.label("input");
@@ -140,7 +209,7 @@ fn main() {
         a.call("rng");
         a.and_a(0x7F).add_a(16).ld_nn_a(h + 1); // X in 16..143
         a.ld_a(0).ld_nn_a(*h); // Y back to the very top
-        a.call("score_inc");
+        a.call("score_inc"); // bumps score + plays the "tick" SFX
         let _ = i;
         a.jra(&done);
         a.label(&skip);
@@ -169,13 +238,30 @@ fn main() {
         a.cp(1).jr(C_JR, &no);
         a.cp(16).jr(NC_JR, &no);
         // both axes overlap -> hit
-        a.jpa("restart");
+        a.jpa("gameover");
         a.label(&no);
     }
     a.ret();
 
+    // ================= gameover: low tone, paint the over screen, STATE=2 ====
+    a.label("gameover");
+    a.tone(900, 0xF1, 0x80); // low "hit" tone
+    a.call("clear_map");
+    a.call("hide_haz");
+    a.ld_a(0).ld_nn_a(OAM_PLAYER + 1); // hide the paddle
+    a.print(0x9800 + 5 * 32 + 5, "GAME OVER");
+    a.print(0x9800 + 8 * 32 + 6, "SCORE");
+    // draw the three score digits after "SCORE " at row 8
+    a.ld_a_nn(D2).add_a(0x30).ld_nn_a(0x9800 + 8 * 32 + 12);
+    a.ld_a_nn(D1).add_a(0x30).ld_nn_a(0x9800 + 8 * 32 + 13);
+    a.ld_a_nn(D0).add_a(0x30).ld_nn_a(0x9800 + 8 * 32 + 14);
+    a.print(0x9800 + 12 * 32 + 4, "PRESS START");
+    a.ld_a(2).ld_nn_a(STATE);
+    a.jpa("loop"); // resume the dispatcher
+
     // ================= score_inc: D0/D1/D2 decimal ripple, ramp speed =====
     a.label("score_inc");
+    a.tone(1700, 0xF3, 0x80); // bright "tick" when a block is dodged
     a.ld_a_nn(D0).inc_r(A).cp(10).jr(C_JR, "si_d0"); // ones++ ; <10 -> store
     a.xor_aa().ld_nn_a(D0); // carry: ones=0
     a.ld_a_nn(D1).inc_r(A).cp(10).jr(C_JR, "si_d1"); // tens++
@@ -202,12 +288,24 @@ fn main() {
     a.call("drawscore");
     a.ret();
 
-    // ================= drawscore: write D2 D1 D0 into the top BG row =====
-    // Digit glyphs are tiles 6..15 (tile 6 = '0', ... tile 15 = '9').
+    // ================= drawscore: write D2 D1 D0 as font digits ($30+n) =====
     a.label("drawscore");
-    a.ld_a_nn(D2).add_a(6).ld_nn_a(0x9801); // hundreds at column 1
-    a.ld_a_nn(D1).add_a(6).ld_nn_a(0x9802); // tens
-    a.ld_a_nn(D0).add_a(6).ld_nn_a(0x9803); // ones
+    a.ld_a_nn(D2).add_a(0x30).ld_nn_a(SCORE_AT + 6); // after "SCORE "
+    a.ld_a_nn(D1).add_a(0x30).ld_nn_a(SCORE_AT + 7);
+    a.ld_a_nn(D0).add_a(0x30).ld_nn_a(SCORE_AT + 8);
+    a.ret();
+
+    // ================= clear_map: blank the visible BG with SPACE ($20) ======
+    a.label("clear_map");
+    a.memset(0x9800, 0x20, 0x0400);
+    a.ret();
+
+    // ================= hide_haz: park the three hazard sprites off-screen ====
+    a.label("hide_haz");
+    for h in HAZ {
+        a.xor_aa().ld_nn_a(h); // Y=0 -> screen y -16 (hidden)
+        a.xor_aa().ld_nn_a(h + 1); // X=0 -> hidden
+    }
     a.ret();
 
     // ================= rng: 8-bit LFSR (tap 0x1D) mixed with DIV =========
@@ -226,14 +324,14 @@ fn main() {
     a.raw(&solid_tile([0x00, 0x00, 0x7E, 0xFF, 0xFF, 0xFF, 0x7E, 0x00]));
     // 2: hazard block — a spiky filled box (color 3)
     a.raw(&solid_tile([0xFF, 0xDB, 0xFF, 0xFF, 0xBD, 0xFF, 0xDB, 0xFF]));
-    // 3,4,5: spare (blank)
-    a.raw(&[0u8; 16]);
-    a.raw(&[0u8; 16]);
-    a.raw(&[0u8; 16]);
-    // 6..15: digits '0'..'9' (color 3 glyphs on transparent BG)
-    for g in DIGITS {
-        a.raw(&solid_tile(g));
+    // 3..15: spare (blank) — art tiles live in 0..31, font owns $20..$5F
+    for _ in 3..16 {
+        a.raw(&[0u8; 16]);
     }
+
+    // ================= font data (tiles $20..$5F) =================
+    a.label("FONT");
+    a.raw(&font_blob());
 
     // ================= emit ROM =================
     let rom = a.build_rom("DODGE");
@@ -241,17 +339,3 @@ fn main() {
     std::fs::write("web/dodge.gb", &rom).unwrap();
     println!("wrote web/dodge.gb ({} bytes code+data at $0150)", a.c.len());
 }
-
-// 5x7-ish digit glyphs, one byte per row (8 rows), color 3 via solid_tile.
-const DIGITS: [[u8; 8]; 10] = [
-    [0x3C, 0x66, 0x6E, 0x76, 0x66, 0x66, 0x3C, 0x00], // 0
-    [0x18, 0x38, 0x18, 0x18, 0x18, 0x18, 0x7E, 0x00], // 1
-    [0x3C, 0x66, 0x06, 0x0C, 0x30, 0x60, 0x7E, 0x00], // 2
-    [0x3C, 0x66, 0x06, 0x1C, 0x06, 0x66, 0x3C, 0x00], // 3
-    [0x0C, 0x1C, 0x3C, 0x6C, 0x7E, 0x0C, 0x0C, 0x00], // 4
-    [0x7E, 0x60, 0x7C, 0x06, 0x06, 0x66, 0x3C, 0x00], // 5
-    [0x3C, 0x66, 0x60, 0x7C, 0x66, 0x66, 0x3C, 0x00], // 6
-    [0x7E, 0x66, 0x0C, 0x18, 0x18, 0x18, 0x18, 0x00], // 7
-    [0x3C, 0x66, 0x66, 0x3C, 0x66, 0x66, 0x3C, 0x00], // 8
-    [0x3C, 0x66, 0x66, 0x3E, 0x06, 0x66, 0x3C, 0x00], // 9
-];

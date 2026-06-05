@@ -1,14 +1,19 @@
 //! Builds an ORIGINAL homebrew Game Boy game — SNAKE — and writes web/snake.gb.
 //!
 //! Polished edition (uses the shared assembler at examples/common/asm.rs):
+//!   * a proper TITLE screen ("SNAKE" / "PRESS START") greets you before play
 //!   * the snake starts at LENGTH 4 heading right, so it reads as a snake on frame 1
 //!   * an on-screen 3-digit decimal SCORE is drawn on the top wall row and ticks
 //!     up (with carry across digits) each time food is eaten
+//!   * sound: APU on at boot, a HIGH blip when food is eaten, a LOW tone on death
 //!   * gentle difficulty: the per-step frame budget shrinks as the score climbs,
 //!     down to a playable floor
-//!   * walls and self-collision kill you; death cleanly restarts to the length-4
-//!     start with the score reset and a fresh board
+//!   * walls and self-collision kill you; death shows a GAME OVER screen with the
+//!     final score and "PRESS START" — pressing Start restarts a fresh board
 //!   * no-180° steering, LFSR-placed food on a random EMPTY cell
+//!
+//! Tile budget: game art lives in tiles 0..13 ($8000..). The bundled font lives in
+//! tiles $20..$5F ($8200..), so the two never collide.
 //!
 //! No copyrighted content (the boot-logo region is left zero; REVENANT skips the
 //! boot ROM and runs from $0100).
@@ -32,6 +37,8 @@ const STEP: u16 = 0xC00C; // current frames-per-step (shrinks as you score)
 const SC_H: u16 = 0xC00D; // score hundreds digit (0..9)
 const SC_T: u16 = 0xC00E; // score tens digit (0..9)
 const SC_O: u16 = 0xC00F; // score ones digit (0..9)
+const STATE: u16 = 0xC010; // 0=title 1=play 2=over
+const LASTBTN: u16 = 0xC011; // last frame's Start-button state (for edge detect)
 const RING: u16 = 0xC100; // ring of 16-bit body-cell addresses
 const RING_END: u16 = 0xC200;
 
@@ -39,7 +46,12 @@ const RING_END: u16 = 0xC200;
 const STEP_START: u8 = 8; // frames per step at score 0 (~7.5 steps/sec)
 const STEP_FLOOR: u8 = 3; // fastest the snake ever moves (~20 steps/sec)
 
-// ---- tile indices in VRAM tile RAM @ $8000 ----
+// ---- state values ----
+const ST_TITLE: u8 = 0;
+const ST_PLAY: u8 = 1;
+const ST_OVER: u8 = 2;
+
+// ---- tile indices in VRAM tile RAM @ $8000 (kept in 0..31, clear of the font) ----
 const T_EMPTY: u8 = 0;
 const T_BODY: u8 = 1;
 const T_FOOD: u8 = 2;
@@ -51,28 +63,51 @@ const SCORE_H_CELL: u16 = 0x9800 + 14;
 const SCORE_T_CELL: u16 = 0x9800 + 15;
 const SCORE_O_CELL: u16 = 0x9800 + 16;
 
+// helper: BG-map cell address for a (row,col)
+const fn map(row: u16, col: u16) -> u16 {
+    0x9800 + row * 32 + col
+}
+
 fn main() {
     let mut a = Asm::new();
 
     // ===== main: one-time setup =====
     a.label("main");
     a.di();
+    a.ld_sp(0xFFFE);
     a.xor_aa().ldh_to(0x40); // LCDC=0 (LCD off, safe to touch VRAM)
-    // copy 14 tiles * 16 bytes (EMPTY,BODY,FOOD,WALL + ten digits) ROM -> $8000
+    a.apu_on(); // sound on for the whole session
+    // copy 14 game tiles * 16 bytes (EMPTY,BODY,FOOD,WALL + ten digits) ROM -> $8000
     a.ld_hl_lbl("TILES").ld_de(0x8000).ld_bc(14 * 16);
     a.label("cpt");
     a.ldi_a_hl().ld_de_a().inc_de().dec_bc().ld_r_r(A, B).or_r(C).jr(NZ_JR, "cpt");
+    a.load_font(); // font into tiles $20..$5F ($8200..)
     a.ld_a(0xE4).ldh_to(0x47); // BGP = shades 3,2,1,0
     a.ldh_from(0x04).ld_nn_a(RNG); // seed LFSR from DIV
-    a.jpa("restart");
+    a.ld_a(0x0F).ld_nn_a(LASTBTN); // assume nothing held at boot
+    a.jpa("title");
+
+    // ===== title: draw the title screen, wait for a fresh Start press =====
+    a.label("title");
+    a.ld_a(ST_TITLE).ld_nn_a(STATE);
+    a.xor_aa().ldh_to(0x40); // LCD off to rebuild the map
+    a.call("clearmap");
+    a.print(map(5, 7), "SNAKE");
+    a.print(map(8, 5), "PRESS START");
+    a.print(map(14, 3), "EAT - GROW - LIVE");
+    a.ld_a(0x91).ldh_to(0x40); // LCD on, BG on, tiles @ $8000
+    a.call("primebtn"); // seed LASTBTN from the current Start state
+    a.label("twait");
+    a.call("vbl");
+    a.call("startedge"); // a = 1 on a fresh Start press
+    a.or_r(A).jr(Z_JR, "twait");
+    // fall through into restart to begin a game
 
     // ===== restart: (re)start a game =====
     a.label("restart");
+    a.ld_a(ST_PLAY).ld_nn_a(STATE);
     a.xor_aa().ldh_to(0x40); // LCD off
-    // clear the whole 32x32 map -> EMPTY
-    a.ld_hl(0x9800).ld_bc(0x0400);
-    a.label("clr");
-    a.xor_aa().ldi_hl_a().dec_bc().ld_r_r(A, B).or_r(C).jr(NZ_JR, "clr");
+    a.call("clearmap");
     a.call("border");
     // reset score to 000 and draw it
     a.xor_aa().ld_nn_a(SC_H).ld_nn_a(SC_T).ld_nn_a(SC_O);
@@ -85,13 +120,9 @@ fn main() {
     a.ld_hl(RING).store16(HEADP).store16(TAILP);
     // --- lay a length-4 snake on row 8, cols 5..8, pushing TAIL-first so the
     //     oldest cell (col5) is popped first as the snake advances ---
-    // col5 (tail)
     a.ld_r_n(B, 8).ld_r_n(C, 5).call("cell").ld_hl_imm(T_BODY).call("push");
-    // col6
     a.ld_r_n(B, 8).ld_r_n(C, 6).call("cell").ld_hl_imm(T_BODY).call("push");
-    // col7
     a.ld_r_n(B, 8).ld_r_n(C, 7).call("cell").ld_hl_imm(T_BODY).call("push");
-    // col8 (head)
     a.ld_r_n(B, 8).ld_r_n(C, 8).call("cell").ld_hl_imm(T_BODY);
     a.store16(HEAD).call("push");
     a.call("food");
@@ -114,15 +145,16 @@ fn main() {
     a.load16(HEAD);
     a.add_hl_de(); // hl = new head addr
     a.ld_a_hl(); // a = target tile
-    a.cp(T_WALL).jp(ZF, "restart"); // WALL -> die
-    a.cp(T_BODY).jp(ZF, "restart"); // BODY -> die
+    a.cp(T_WALL).jp(ZF, "die"); // WALL -> die
+    a.cp(T_BODY).jp(ZF, "die"); // BODY -> die
     a.ld_nn_a(TMP); // save target tile (push clobbers regs)
     a.ld_hl_imm(T_BODY); // draw BODY at the new head
     a.store16(HEAD);
     a.call("push"); // record new head in the ring
     a.ld_a_nn(TMP).cp(T_FOOD);
     a.jr(NZ_JR, "noeat");
-    // ate food: bump score, place new food, KEEP the tail (grow)
+    // ate food: blip, bump score, place new food, KEEP the tail (grow)
+    a.tone(1850, 0xF3, 0x80); // HIGH eat blip
     a.call("scoreup");
     a.call("food");
     a.ret();
@@ -131,17 +163,61 @@ fn main() {
     a.ld_hl_imm(T_EMPTY); // erase the tail
     a.ret();
 
+    // ===== die: low tone, then show the game-over screen =====
+    a.label("die");
+    a.tone(700, 0xF1, 0x80); // LOW death tone
+    a.jpa("gameover");
+
+    // ===== gameover: draw final score, wait for a fresh Start press to retry =====
+    a.label("gameover");
+    a.ld_a(ST_OVER).ld_nn_a(STATE);
+    a.xor_aa().ldh_to(0x40); // LCD off to rebuild the map
+    a.call("clearmap");
+    a.print(map(5, 6), "GAME OVER");
+    a.print(map(8, 6), "SCORE");
+    // draw the three score digits next to "SCORE" using the FONT digits (ASCII)
+    a.ld_a_nn(SC_H).add_a(0x30).ld_nn_a(map(8, 12));
+    a.ld_a_nn(SC_T).add_a(0x30).ld_nn_a(map(8, 13));
+    a.ld_a_nn(SC_O).add_a(0x30).ld_nn_a(map(8, 14));
+    a.print(map(11, 5), "PRESS START");
+    a.ld_a(0x91).ldh_to(0x40); // LCD on
+    a.call("primebtn"); // seed LASTBTN so only a FRESH press after entry restarts
+    a.label("owait");
+    a.call("vbl");
+    a.call("startedge");
+    a.or_r(A).jr(Z_JR, "owait");
+    a.jpa("restart");
+
+    // ===== primebtn: store the current raw Start bit into LASTBTN =====
+    a.label("primebtn");
+    a.ld_a(0x10).ldh_to(0x00);
+    a.ldh_from(0x00).ldh_from(0x00);
+    a.and_a(0x08).ld_nn_a(LASTBTN);
+    a.ret();
+
+    // ===== startedge: a=1 on a fresh (this frame, not last) Start press, else 0 =====
+    a.label("startedge");
+    a.ld_a(0x10).ldh_to(0x00); // select buttons
+    a.ldh_from(0x00).ldh_from(0x00); // read (twice to settle)
+    a.and_a(0x08); // isolate Start (bit3): 0 = pressed, 8 = up
+    a.ld_r_r(C, A); // c = current raw Start bit
+    a.ld_a_nn(LASTBTN).ld_r_r(B, A); // b = last frame's bit
+    a.ld_r_r(A, C).ld_nn_a(LASTBTN); // store current as the new "last"
+    // fresh press = pressed now (C==0) AND not pressed last (B!=0)
+    a.ld_r_r(A, C).or_r(A).jr(NZ_JR, "se_no"); // not pressed now -> 0
+    a.ld_r_r(A, B).or_r(A).jr(Z_JR, "se_no"); // was pressed last -> 0 (held)
+    a.ld_a(1).ret(); // fresh press
+    a.label("se_no");
+    a.xor_aa().ret();
+
     // ===== scoreup: ++score (ones->tens->hundreds carry), speed up, redraw =====
     a.label("scoreup");
-    // ones
     a.ld_a_nn(SC_O).inc_r(A).cp(10).jr(NZ_JR, "sc_done_o");
     a.xor_aa().ld_nn_a(SC_O);
-    // tens
     a.ld_a_nn(SC_T).inc_r(A).cp(10).jr(NZ_JR, "sc_done_t");
     a.xor_aa().ld_nn_a(SC_T);
-    // hundreds (caps at 9; score >999 just stops climbing the hundreds digit)
     a.ld_a_nn(SC_H).inc_r(A).cp(10).jr(NZ_JR, "sc_done_h");
-    a.ld_a(9); // clamp
+    a.ld_a(9); // clamp at 999
     a.label("sc_done_h");
     a.ld_nn_a(SC_H);
     a.jra("sc_speed");
@@ -150,7 +226,6 @@ fn main() {
     a.jra("sc_speed");
     a.label("sc_done_o");
     a.ld_nn_a(SC_O);
-    // speed up: STEP-- unless already at the floor
     a.label("sc_speed");
     a.ld_a_nn(STEP).cp(STEP_FLOOR + 1).jr(C_JR, "sc_draw"); // STEP <= FLOOR -> skip
     a.dec_r(A).ld_nn_a(STEP);
@@ -158,11 +233,18 @@ fn main() {
     a.call("drawscore");
     a.ret();
 
-    // ===== drawscore: write the three digit tiles onto the top wall row =====
+    // ===== drawscore: write the three game-tile digits onto the top wall row =====
     a.label("drawscore");
     a.ld_a_nn(SC_H).add_a(T_DIGIT0).ld_nn_a(SCORE_H_CELL);
     a.ld_a_nn(SC_T).add_a(T_DIGIT0).ld_nn_a(SCORE_T_CELL);
     a.ld_a_nn(SC_O).add_a(T_DIGIT0).ld_nn_a(SCORE_O_CELL);
+    a.ret();
+
+    // ===== clearmap: fill the whole 32x32 BG map with EMPTY (tile 0) =====
+    a.label("clearmap");
+    a.ld_hl(0x9800).ld_bc(0x0400);
+    a.label("clr");
+    a.xor_aa().ldi_hl_a().dec_bc().ld_r_r(A, B).or_r(C).jr(NZ_JR, "clr");
     a.ret();
 
     // ===== push: ring[HEADP]=HL, advance with wrap =====
@@ -254,17 +336,13 @@ fn main() {
     a.ld_r_n(B, 0); // b = i = 0
     a.label("bl");
     a.push_bc();
-    // top row0, col=i
-    a.ld_r_r(C, B).ld_r_n(B, 0).call("cell").ld_hl_imm(T_WALL);
+    a.ld_r_r(C, B).ld_r_n(B, 0).call("cell").ld_hl_imm(T_WALL); // top row0
     a.pop_bc().push_bc();
-    // bottom row17, col=i
-    a.ld_r_r(C, B).ld_r_n(B, 17).call("cell").ld_hl_imm(T_WALL);
+    a.ld_r_r(C, B).ld_r_n(B, 17).call("cell").ld_hl_imm(T_WALL); // bottom row17
     a.pop_bc().push_bc();
-    // left col0, row=i
-    a.ld_r_n(C, 0).call("cell").ld_hl_imm(T_WALL);
+    a.ld_r_n(C, 0).call("cell").ld_hl_imm(T_WALL); // left col0
     a.pop_bc().push_bc();
-    // right col17, row=i
-    a.ld_r_n(C, 17).call("cell").ld_hl_imm(T_WALL);
+    a.ld_r_n(C, 17).call("cell").ld_hl_imm(T_WALL); // right col17
     a.pop_bc();
     a.inc_r(B).ld_r_r(A, B).cp(18).jr(NZ_JR, "bl");
     a.ret();
@@ -286,6 +364,10 @@ fn main() {
         }
     }
 
+    // font blob (1 KiB) for the title / game-over text, placed once in ROM
+    a.label("FONT");
+    a.raw(&font_blob());
+
     let rom = a.build_rom("SNAKE");
     std::fs::create_dir_all("web").ok();
     std::fs::write("web/snake.gb", &rom).unwrap();
@@ -295,24 +377,14 @@ fn main() {
 // 8-row glyphs (one byte per pixel row, MSB = leftmost pixel). Drawn at color 3.
 #[rustfmt::skip]
 const DIGITS: [[u8; 8]; 10] = [
-    // 0
     [0b01110000, 0b10001000, 0b10011000, 0b10101000, 0b11001000, 0b10001000, 0b01110000, 0],
-    // 1
     [0b00100000, 0b01100000, 0b00100000, 0b00100000, 0b00100000, 0b00100000, 0b01110000, 0],
-    // 2
     [0b01110000, 0b10001000, 0b00001000, 0b00010000, 0b00100000, 0b01000000, 0b11111000, 0],
-    // 3
     [0b11111000, 0b00010000, 0b00100000, 0b00010000, 0b00001000, 0b10001000, 0b01110000, 0],
-    // 4
     [0b00010000, 0b00110000, 0b01010000, 0b10010000, 0b11111000, 0b00010000, 0b00010000, 0],
-    // 5
     [0b11111000, 0b10000000, 0b11110000, 0b00001000, 0b00001000, 0b10001000, 0b01110000, 0],
-    // 6
     [0b00110000, 0b01000000, 0b10000000, 0b11110000, 0b10001000, 0b10001000, 0b01110000, 0],
-    // 7
     [0b11111000, 0b00001000, 0b00010000, 0b00100000, 0b01000000, 0b01000000, 0b01000000, 0],
-    // 8
     [0b01110000, 0b10001000, 0b10001000, 0b01110000, 0b10001000, 0b10001000, 0b01110000, 0],
-    // 9
     [0b01110000, 0b10001000, 0b10001000, 0b01111000, 0b00001000, 0b00010000, 0b01100000, 0],
 ];

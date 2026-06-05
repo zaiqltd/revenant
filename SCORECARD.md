@@ -1,6 +1,6 @@
 # REVENANT — Accuracy Scorecard
 
-**Canonical gate set: passes 127/279**
+**Canonical gate set: passes 130/279**
 
 | Category | Pass | Total |
 |---|---:|---:|
@@ -8,7 +8,7 @@
 | age | 2 | 47 |
 | blargg | 17 | 20 |
 | mealybug | 3 | 24 |
-| mooneye/acceptance | 56 | 75 |
+| mooneye/acceptance | 59 | 75 |
 | mooneye/emulator-only | 28 | 28 |
 | same-suite | 14 | 78 |
 | scribbl | 4 | 4 |
@@ -89,22 +89,22 @@
 | blargg | oam_bug | ❌ FAIL | Failed |
 | mealybug | m2_win_en_toggle | ✅ PASS | differing pixels: 0/23040 (0.000%) |
 | mealybug | m3_bgp_change | ❌ FAIL | differing pixels: 8684/23040 (37.691%) |
-| mealybug | m3_bgp_change_sprites | ❌ FAIL | differing pixels: 9808/23040 (42.569%) |
-| mealybug | m3_lcdc_bg_en_change | ❌ FAIL | differing pixels: 3413/23040 (14.813%) |
-| mealybug | m3_lcdc_bg_map_change | ❌ FAIL | differing pixels: 978/23040 (4.245%) |
+| mealybug | m3_bgp_change_sprites | ❌ FAIL | differing pixels: 9736/23040 (42.257%) |
+| mealybug | m3_lcdc_bg_en_change | ❌ FAIL | differing pixels: 3627/23040 (15.742%) |
+| mealybug | m3_lcdc_bg_map_change | ❌ FAIL | differing pixels: 970/23040 (4.210%) |
 | mealybug | m3_lcdc_obj_en_change | ❌ FAIL | differing pixels: 146/23040 (0.634%) |
-| mealybug | m3_lcdc_obj_en_change_variant | ❌ FAIL | differing pixels: 1334/23040 (5.790%) |
-| mealybug | m3_lcdc_obj_size_change | ❌ FAIL | differing pixels: 350/23040 (1.519%) |
+| mealybug | m3_lcdc_obj_en_change_variant | ❌ FAIL | differing pixels: 1310/23040 (5.686%) |
+| mealybug | m3_lcdc_obj_size_change | ❌ FAIL | differing pixels: 370/23040 (1.606%) |
 | mealybug | m3_lcdc_obj_size_change_scx | ❌ FAIL | differing pixels: 190/23040 (0.825%) |
-| mealybug | m3_lcdc_tile_sel_change | ❌ FAIL | differing pixels: 2062/23040 (8.950%) |
-| mealybug | m3_lcdc_tile_sel_win_change | ❌ FAIL | differing pixels: 2754/23040 (11.953%) |
+| mealybug | m3_lcdc_tile_sel_change | ❌ FAIL | differing pixels: 2054/23040 (8.915%) |
+| mealybug | m3_lcdc_tile_sel_win_change | ❌ FAIL | differing pixels: 2634/23040 (11.432%) |
 | mealybug | m3_lcdc_win_en_change_multiple | ❌ FAIL | differing pixels: 8316/23040 (36.094%) |
 | mealybug | m3_lcdc_win_en_change_multiple_wx | ❌ FAIL | differing pixels: 6041/23040 (26.220%) |
-| mealybug | m3_lcdc_win_map_change | ❌ FAIL | differing pixels: 2180/23040 (9.462%) |
+| mealybug | m3_lcdc_win_map_change | ❌ FAIL | differing pixels: 2172/23040 (9.427%) |
 | mealybug | m3_obp0_change | ❌ FAIL | differing pixels: 432/23040 (1.875%) |
 | mealybug | m3_scx_high_5_bits | ✅ PASS | differing pixels: 84/23040 (0.365%) |
 | mealybug | m3_scx_low_3_bits | ❌ FAIL | differing pixels: 540/23040 (2.344%) |
-| mealybug | m3_scy_change | ❌ FAIL | differing pixels: 11332/23040 (49.184%) |
+| mealybug | m3_scy_change | ❌ FAIL | differing pixels: 9788/23040 (42.483%) |
 | mealybug | m3_window_timing | ❌ FAIL | differing pixels: 2787/23040 (12.096%) |
 | mealybug | m3_window_timing_wx_0 | ❌ FAIL | differing pixels: 3228/23040 (14.010%) |
 | mealybug | m3_wx_4_change | ❌ FAIL | differing pixels: 10138/23040 (44.002%) |
@@ -156,10 +156,10 @@
 | mooneye/acceptance | ppu/hblank_ly_scx_timing-GS | ✅ PASS | magic |
 | mooneye/acceptance | ppu/intr_1_2_timing-GS | ✅ PASS | magic |
 | mooneye/acceptance | ppu/intr_2_0_timing | ✅ PASS | magic |
-| mooneye/acceptance | ppu/intr_2_mode0_timing | ❌ FAIL | regs b=42 c=42 d=42 e=42 h=42 l=42 |
+| mooneye/acceptance | ppu/intr_2_mode0_timing | ✅ PASS | magic |
 | mooneye/acceptance | ppu/intr_2_mode0_timing_sprites | ❌ FAIL | regs b=42 c=42 d=42 e=42 h=42 l=42 |
-| mooneye/acceptance | ppu/intr_2_mode3_timing | ❌ FAIL | regs b=42 c=42 d=42 e=42 h=42 l=42 |
-| mooneye/acceptance | ppu/intr_2_oam_ok_timing | ❌ FAIL | regs b=42 c=42 d=42 e=42 h=42 l=42 |
+| mooneye/acceptance | ppu/intr_2_mode3_timing | ✅ PASS | magic |
+| mooneye/acceptance | ppu/intr_2_oam_ok_timing | ✅ PASS | magic |
 | mooneye/acceptance | ppu/lcdon_timing-GS | ❌ FAIL | regs b=42 c=42 d=42 e=42 h=42 l=42 |
 | mooneye/acceptance | ppu/lcdon_write_timing-GS | ❌ FAIL | regs b=42 c=42 d=42 e=42 h=42 l=42 |
 | mooneye/acceptance | ppu/stat_irq_blocking | ✅ PASS | magic |

@@ -99,6 +99,17 @@ pub struct Ppu {
 
     // timing
     pub mode: u8,
+    // The mode bits a CPU read of STAT observes. The bus ticks the PPU a full
+    // M-cycle (4 dots, normal speed) *before* sampling the read, so a read lands
+    // one M-cycle "late" relative to the internal mode transition. Real hardware
+    // latches the read earlier, so the read-visible mode lags the internal mode by
+    // one M-cycle. `mode_pipe` is a 4-deep dot history; `stat_read_mode` is the
+    // value 4 dots ago. The STAT *interrupt* line still edges off the live mode, so
+    // IRQ-based timing (intr_2_0_timing, vblank_stat) is unchanged — only the value
+    // a polling `LD A,(FF41)` reads is delayed (intr_2_mode0/mode3_timing).
+    stat_read_mode: u8,
+    mode_pipe: [u8; 4],
+    mode_pipe_head: usize,
     dot_in_line: u32,
     // Physical scanline 0..=153. Distinct from the reported `ly` register, which
     // wraps 153->0 early on the last VBlank line (the LY=153 quirk).
@@ -128,8 +139,14 @@ pub struct Ppu {
     // sprite fetch in progress
     sp_fetch_active: bool,
     sp_fetch_idx: usize,        // index into line_sprites
-    sp_fetch_step: u8,          // 0..=5 sub-steps of an object fetch
+    sp_fetch_step: u8,          // dots elapsed in the current object fetch
+    sp_fetch_total: u8,         // total dots this object fetch costs (6..=11)
     sprite_done: [bool; 10],    // which selected sprites have already been fetched
+    // Which BG/Window tile columns have already paid the per-object "wait for the
+    // BG fetch to finish" penalty this line. A second object whose leftmost pixel
+    // lands in an already-charged tile only pays the flat 6-dot fetch (Pan Docs
+    // §"Mode 3 length", OBJ penalty algorithm).
+    sprite_tiles_charged: u32,
 
     // Mid-Mode-3 register writes reach the pixel pipeline a few dots after the CPU
     // issues them (the CPU write lands at an M-cycle boundary, but the rendered
@@ -202,6 +219,9 @@ impl Ppu {
             obj_pal: [0xFF; 64],
             opri: 0,
             mode: 2,
+            stat_read_mode: 2,
+            mode_pipe: [2; 4],
+            mode_pipe_head: 0,
             dot_in_line: 0,
             phys_line: 0,
             window_line: 0,
@@ -222,7 +242,9 @@ impl Ppu {
             sp_fetch_active: false,
             sp_fetch_idx: 0,
             sp_fetch_step: 0,
+            sp_fetch_total: 6,
             sprite_done: [false; 10],
+            sprite_tiles_charged: 0,
             reg_hist: [RegSnap { bgp: 0xFC, obp0: 0xFF, obp1: 0xFF, lcdc: 0x91 }; Self::REG_HIST],
             reg_head: 0,
             vblank_irq: false,
@@ -259,6 +281,15 @@ impl Ppu {
     }
 
     pub fn read_oam(&self, addr: u16) -> u8 {
+        // OAM is inaccessible to the CPU during Mode 2 (OAM scan) and Mode 3
+        // (drawing): a read returns $FF. We gate on the *read-visible* mode
+        // (`stat_read_mode`, the one-M-cycle-delayed mode the CPU observes) so the
+        // unlock dot lines up exactly with the STAT mode-0 edge a polling read sees
+        // (mooneye intr_2_oam_ok_timing brackets the same Mode 3->0 boundary as
+        // intr_2_mode0_timing). With the LCD off the mode reads 0, so OAM is open.
+        if self.lcd_on() && (self.stat_read_mode == 2 || self.stat_read_mode == 3) {
+            return 0xFF;
+        }
         self.oam[addr as usize - 0xFE00]
     }
     pub fn write_oam(&mut self, addr: u16, v: u8) {
@@ -274,7 +305,10 @@ impl Ppu {
     pub fn read_reg(&self, addr: u16) -> u8 {
         match addr {
             0xFF40 => self.lcdc,
-            0xFF41 => self.stat | 0x80,
+            // Bits 1-0 (mode) are observed by a CPU read one M-cycle late (the bus
+            // ticks the PPU before sampling); expose the delayed mode, not the live
+            // one. Bits 7,6-3,2 are unaffected.
+            0xFF41 => (self.stat & 0xFC) | self.stat_read_mode | 0x80,
             0xFF42 => self.scy,
             0xFF43 => self.scx,
             0xFF44 => self.ly,
@@ -311,6 +345,11 @@ impl Ppu {
                     self.window_y_triggered = false;
                     self.lyc_suppress = false;
                     self.stat &= !0x03; // mode bits -> 0
+                    // STAT reads 0 in the mode field while the LCD is off; flush the
+                    // read-delay pipe so a read right after disable sees 0, not the
+                    // stale mode from before disable.
+                    self.stat_read_mode = 0;
+                    self.mode_pipe = [0; 4];
                     // The internal STAT interrupt line is NOT cleared on disable:
                     // its LYC component stays latched from the frozen coincidence,
                     // so a later enable only edges if the coincidence *changes*
@@ -324,6 +363,8 @@ impl Ppu {
                     // The first line after LCD-on reports Mode 0, not Mode 2 (the
                     // LCD-on quirk: line 0 goes Mode0 -> Mode3 with no Mode 2).
                     self.mode = 0;
+                    self.stat_read_mode = 0;
+                    self.mode_pipe = [0; 4];
                     self.just_enabled = true;
                     self.lyc_suppress = false;
                     self.check_lyc();
@@ -452,6 +493,18 @@ impl Ppu {
             }
         }
         self.update_stat_line();
+        self.advance_mode_pipe();
+    }
+
+    /// Shift the live mode into the 4-dot read-delay pipe and surface the value
+    /// from 4 dots ago as the read-visible STAT mode. A CPU `LD A,(FF41)` samples
+    /// one M-cycle after the bus tick, so it sees the mode as it was one M-cycle
+    /// earlier — this reproduces the exact dot at which a polling read first
+    /// observes a Mode 2->3 or 3->0 edge (mooneye intr_2_mode0/mode3_timing).
+    fn advance_mode_pipe(&mut self) {
+        self.stat_read_mode = self.mode_pipe[self.mode_pipe_head];
+        self.mode_pipe[self.mode_pipe_head] = self.mode & 0x03;
+        self.mode_pipe_head = (self.mode_pipe_head + 1) & 3;
     }
 
     fn advance_line(&mut self) {
@@ -552,7 +605,9 @@ impl Ppu {
         self.sp_fetch_active = false;
         self.sp_fetch_idx = 0;
         self.sp_fetch_step = 0;
+        self.sp_fetch_total = 6;
         self.sprite_done = [false; 10];
+        self.sprite_tiles_charged = 0;
         // Prime the register history with the values live at Mode-3 start so the
         // first pixels latch the correct (pre-write) values.
         let snap = RegSnap { bgp: self.bgp, obp0: self.obp0, obp1: self.obp1, lcdc: self.lcdc };
@@ -610,9 +665,12 @@ impl Ppu {
         }
 
         // If a selected object's left edge is at the current output column, pause
-        // BG output and begin its fetch this dot (no pixel shipped).
+        // BG output and begin its fetch. This trigger dot is the FIRST dot of the
+        // object fetch (it ships no pixel), so advance the fetch one step here — the
+        // total object cost is then exactly `sp_fetch_total` dots, not one more.
         self.maybe_start_sprite_fetch();
         if self.sp_fetch_active {
+            self.sprite_fetch_step();
             return;
         }
 
@@ -782,22 +840,61 @@ impl Ppu {
                 continue;
             }
             let si = self.line_sprites[idx] as usize;
-            let sx = self.oam[si * 4 + 1] as i32 - 8;
+            let raw_x = self.oam[si * 4 + 1];
+            let sx = raw_x as i32 - 8;
             if sx == cur_x || (sx < cur_x && cur_x == 0) {
                 self.sp_fetch_active = true;
                 self.sp_fetch_idx = idx;
                 self.sp_fetch_step = 0;
+                self.sp_fetch_total = self.object_penalty(raw_x, sx);
                 return;
             }
         }
     }
 
+    /// Output-blocking dot cost of fetching one object during Mode 3. The flat OBJ
+    /// tile fetch is 6 dots, plus 0..5 dots of "wait for the BG fetcher to finish the
+    /// tile The Pixel lands in" — charged once per BG/Window tile per line (Pan Docs
+    /// OBJ penalty algorithm). These dots stall pixel output, so they both lengthen
+    /// Mode 3 and shift the pixels drawn after the object — which is what the
+    /// mid-Mode-3 mealybug tests (e.g. m3_scx_high_5_bits) measure.
+    fn object_penalty(&mut self, _raw_x: u8, sx: i32) -> u8 {
+        // The Pixel = the object's leftmost pixel, at screen column `sx` (negative for
+        // objects hanging off the left edge, incl. OAM X==0 -> sx=-8). Find the
+        // BG/Window fetch tile it lands in (SCX fine scroll, or the window's own X
+        // origin) and how far into that tile it sits.
+        let (tile_col, pixel_in_tile) = if self.win_active {
+            let win_left = self.wx as i32 - 7;
+            let pos = sx - win_left;
+            (pos.div_euclid(8), pos.rem_euclid(8))
+        } else {
+            let pos = sx + (self.scx as i32 & 7);
+            (pos.div_euclid(8), pos.rem_euclid(8))
+        };
+        let var = (5 - pixel_in_tile).max(0) as u8;
+        // Per-tile dedup: only the first object in a given tile column pays the
+        // variable wait. tile_col spans roughly -1..=20; offset into a bitmask.
+        let charged = {
+            let bit_idx = (tile_col + 1).clamp(0, 31) as u32;
+            let bit = 1u32 << bit_idx;
+            let already = self.sprite_tiles_charged & bit != 0;
+            self.sprite_tiles_charged |= bit;
+            already
+        };
+        if charged {
+            6
+        } else {
+            6 + var
+        }
+    }
+
     fn sprite_fetch_step(&mut self) {
-        // Object fetch takes ~6 dots; we model it as 6 sub-steps and merge on the
-        // last. (Penalty granularity is sufficient for the timing tests because the
-        // BG fetcher keeps stepping during the fetch.)
+        // The object fetch occupies `sp_fetch_total` dots (6..=11). The BG fetcher
+        // keeps stepping during these dots but no pixel is shipped, so this is
+        // exactly the Mode-3 lengthening the timing tests assert. The merge happens
+        // on the final dot.
         self.sp_fetch_step += 1;
-        if self.sp_fetch_step >= 6 {
+        if self.sp_fetch_step >= self.sp_fetch_total {
             self.merge_sprite(self.sp_fetch_idx);
             self.sprite_done[self.sp_fetch_idx] = true;
             self.sp_fetch_active = false;

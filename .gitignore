@@ -12,3 +12,10 @@ roms/games/
 /out
 roms/*.json
 roms/*.zip
+
+# wasm build artifact (reproduce with web/build.sh)
+web/revenant.wasm
+
+web/*.gb
+web/*.gbc
+web/out_*.png

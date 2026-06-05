@@ -1,13 +1,13 @@
 # REVENANT — Accuracy Scorecard
 
-**Canonical gate set: passes 126/279**
+**Canonical gate set: passes 127/279**
 
 | Category | Pass | Total |
 |---|---:|---:|
 | acid2 | 3 | 3 |
 | age | 2 | 47 |
 | blargg | 17 | 20 |
-| mealybug | 2 | 24 |
+| mealybug | 3 | 24 |
 | mooneye/acceptance | 56 | 75 |
 | mooneye/emulator-only | 28 | 28 |
 | same-suite | 14 | 78 |
@@ -88,29 +88,29 @@
 | blargg | mem_timing-2 | ✅ PASS | done |
 | blargg | oam_bug | ❌ FAIL | Failed |
 | mealybug | m2_win_en_toggle | ✅ PASS | differing pixels: 0/23040 (0.000%) |
-| mealybug | m3_bgp_change | ❌ FAIL | differing pixels: 21360/23040 (92.708%) |
-| mealybug | m3_bgp_change_sprites | ❌ FAIL | differing pixels: 5262/23040 (22.839%) |
-| mealybug | m3_lcdc_bg_en_change | ❌ FAIL | differing pixels: 2189/23040 (9.501%) |
-| mealybug | m3_lcdc_bg_map_change | ❌ FAIL | differing pixels: 1234/23040 (5.356%) |
+| mealybug | m3_bgp_change | ❌ FAIL | differing pixels: 8684/23040 (37.691%) |
+| mealybug | m3_bgp_change_sprites | ❌ FAIL | differing pixels: 9808/23040 (42.569%) |
+| mealybug | m3_lcdc_bg_en_change | ❌ FAIL | differing pixels: 3413/23040 (14.813%) |
+| mealybug | m3_lcdc_bg_map_change | ❌ FAIL | differing pixels: 978/23040 (4.245%) |
 | mealybug | m3_lcdc_obj_en_change | ❌ FAIL | differing pixels: 146/23040 (0.634%) |
-| mealybug | m3_lcdc_obj_en_change_variant | ❌ FAIL | differing pixels: 15846/23040 (68.776%) |
-| mealybug | m3_lcdc_obj_size_change | ❌ FAIL | differing pixels: 310/23040 (1.345%) |
+| mealybug | m3_lcdc_obj_en_change_variant | ❌ FAIL | differing pixels: 1334/23040 (5.790%) |
+| mealybug | m3_lcdc_obj_size_change | ❌ FAIL | differing pixels: 350/23040 (1.519%) |
 | mealybug | m3_lcdc_obj_size_change_scx | ❌ FAIL | differing pixels: 190/23040 (0.825%) |
-| mealybug | m3_lcdc_tile_sel_change | ❌ FAIL | differing pixels: 1422/23040 (6.172%) |
-| mealybug | m3_lcdc_tile_sel_win_change | ❌ FAIL | differing pixels: 1738/23040 (7.543%) |
-| mealybug | m3_lcdc_win_en_change_multiple | ❌ FAIL | differing pixels: 8982/23040 (38.984%) |
-| mealybug | m3_lcdc_win_en_change_multiple_wx | ❌ FAIL | differing pixels: 6003/23040 (26.055%) |
-| mealybug | m3_lcdc_win_map_change | ❌ FAIL | differing pixels: 1156/23040 (5.017%) |
+| mealybug | m3_lcdc_tile_sel_change | ❌ FAIL | differing pixels: 2062/23040 (8.950%) |
+| mealybug | m3_lcdc_tile_sel_win_change | ❌ FAIL | differing pixels: 2754/23040 (11.953%) |
+| mealybug | m3_lcdc_win_en_change_multiple | ❌ FAIL | differing pixels: 8316/23040 (36.094%) |
+| mealybug | m3_lcdc_win_en_change_multiple_wx | ❌ FAIL | differing pixels: 6041/23040 (26.220%) |
+| mealybug | m3_lcdc_win_map_change | ❌ FAIL | differing pixels: 2180/23040 (9.462%) |
 | mealybug | m3_obp0_change | ❌ FAIL | differing pixels: 432/23040 (1.875%) |
-| mealybug | m3_scx_high_5_bits | ❌ FAIL | differing pixels: 9766/23040 (42.387%) |
+| mealybug | m3_scx_high_5_bits | ✅ PASS | differing pixels: 84/23040 (0.365%) |
 | mealybug | m3_scx_low_3_bits | ❌ FAIL | differing pixels: 540/23040 (2.344%) |
-| mealybug | m3_scy_change | ❌ FAIL | differing pixels: 9481/23040 (41.150%) |
-| mealybug | m3_window_timing | ❌ FAIL | differing pixels: 1215/23040 (5.273%) |
-| mealybug | m3_window_timing_wx_0 | ❌ FAIL | differing pixels: 954/23040 (4.141%) |
-| mealybug | m3_wx_4_change | ❌ FAIL | differing pixels: 11888/23040 (51.597%) |
+| mealybug | m3_scy_change | ❌ FAIL | differing pixels: 11332/23040 (49.184%) |
+| mealybug | m3_window_timing | ❌ FAIL | differing pixels: 2787/23040 (12.096%) |
+| mealybug | m3_window_timing_wx_0 | ❌ FAIL | differing pixels: 3228/23040 (14.010%) |
+| mealybug | m3_wx_4_change | ❌ FAIL | differing pixels: 10138/23040 (44.002%) |
 | mealybug | m3_wx_4_change_sprites | ✅ PASS | differing pixels: 10/23040 (0.043%) |
-| mealybug | m3_wx_5_change | ❌ FAIL | differing pixels: 11471/23040 (49.787%) |
-| mealybug | m3_wx_6_change | ❌ FAIL | differing pixels: 8550/23040 (37.109%) |
+| mealybug | m3_wx_5_change | ❌ FAIL | differing pixels: 9521/23040 (41.324%) |
+| mealybug | m3_wx_6_change | ❌ FAIL | differing pixels: 13281/23040 (57.643%) |
 | mooneye/acceptance | add_sp_e_timing | ✅ PASS | magic |
 | mooneye/acceptance | bits/mem_oam | ✅ PASS | magic |
 | mooneye/acceptance | bits/reg_f | ✅ PASS | magic |

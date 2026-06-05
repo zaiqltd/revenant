@@ -19,9 +19,15 @@ struct Envelope {
     timer: u8,
 }
 impl Envelope {
-    fn trigger(&mut self) {
+    fn trigger(&mut self, next_step_is_env: bool) {
         self.volume = self.initial;
         self.timer = if self.period == 0 { 8 } else { self.period };
+        // Trigger-on-envelope-step quirk: if the channel is triggered on a
+        // DIV-APU step that *will* clock the envelope next (next step == 7), the
+        // envelope timer is loaded with period + 1 (spec §7).
+        if next_step_is_env {
+            self.timer = self.timer.wrapping_add(1);
+        }
     }
     fn clock(&mut self) {
         if self.period == 0 {
@@ -116,13 +122,15 @@ impl Pulse {
             }
         }
     }
-    fn trigger(&mut self) {
+    fn trigger(&mut self, next_step_is_env: bool) {
         self.enabled = self.dac;
         if self.length == 0 {
             self.length = 64;
         }
-        self.timer = self.period();
-        self.env.trigger();
+        // Trigger period-timer quirk (spec §2): on CH1/CH2 trigger the low 2 bits
+        // of the frequency timer are preserved, not reloaded.
+        self.timer = (self.period() & !3) | (self.timer & 3);
+        self.env.trigger(next_step_is_env);
         if self.has_sweep {
             self.sweep_shadow = self.freq;
             self.sweep_timer = if self.sweep_period == 0 { 8 } else { self.sweep_period };
@@ -252,14 +260,14 @@ impl Noise {
             }
         }
     }
-    fn trigger(&mut self) {
+    fn trigger(&mut self, next_step_is_env: bool) {
         self.enabled = self.dac;
         if self.length == 0 {
             self.length = 64;
         }
         self.timer = self.period().max(1);
         self.lfsr = 0x7FFF;
-        self.env.trigger();
+        self.env.trigger(next_step_is_env);
     }
     fn output(&self) -> u8 {
         if !self.enabled || !self.dac {
@@ -380,6 +388,24 @@ impl Apu {
         self.ch4.clock_length();
     }
 
+    /// True when the *next* DIV-APU step will clock the length counters
+    /// (steps 0,2,4,6). `fs_step` holds the next step to execute.
+    fn next_clocks_length(&self) -> bool {
+        self.fs_step & 1 == 0
+    }
+
+    /// The "first half" of a length period — the next DIV-APU step does NOT
+    /// clock length. This is the window in which the extra-length-clock quirk
+    /// (spec §6) fires on an NRx4 write.
+    fn in_first_half(&self) -> bool {
+        !self.next_clocks_length()
+    }
+
+    /// True when the *next* DIV-APU step will clock the envelope (step 7).
+    fn next_clocks_env(&self) -> bool {
+        self.fs_step == 7
+    }
+
     fn emit_sample(&mut self) {
         let c1 = dac(self.ch1.output());
         let c2 = dac(self.ch2.output());
@@ -472,7 +498,11 @@ impl Apu {
                 self.ch1.sweep_shift = v & 0x07;
             }
             0xFF11 => {
-                self.ch1.duty = v >> 6;
+                // While powered off (DMG), only the length load is writable; the
+                // duty bits keep their value (blargg 01-registers #6).
+                if self.power {
+                    self.ch1.duty = v >> 6;
+                }
                 self.ch1.length = 64 - (v & 0x3F) as u16;
             }
             0xFF12 => {
@@ -485,13 +515,32 @@ impl Apu {
             0xFF13 => self.ch1.freq = (self.ch1.freq & 0x700) | v as u16,
             0xFF14 => {
                 self.ch1.freq = (self.ch1.freq & 0xFF) | (((v & 0x07) as u16) << 8);
+                let first_half = self.in_first_half();
+                let next_env = self.next_clocks_env();
+                let prev_en = self.ch1.length_enable;
+                let trigger = v & 0x80 != 0;
                 self.ch1.length_enable = v & 0x40 != 0;
-                if v & 0x80 != 0 {
-                    self.ch1.trigger();
+                // Extra length clock on length-enable rising edge in the first half.
+                if first_half && !prev_en && self.ch1.length_enable && self.ch1.length > 0 {
+                    self.ch1.length -= 1;
+                    if self.ch1.length == 0 && !trigger {
+                        self.ch1.enabled = false;
+                    }
+                }
+                if trigger {
+                    let was_zero = self.ch1.length == 0;
+                    self.ch1.trigger(next_env);
+                    // 63/255 collision: reloaded-from-0 length in the first half
+                    // with length-enable set loads max-1.
+                    if was_zero && first_half && self.ch1.length_enable && self.ch1.length > 0 {
+                        self.ch1.length -= 1;
+                    }
                 }
             }
             0xFF16 => {
-                self.ch2.duty = v >> 6;
+                if self.power {
+                    self.ch2.duty = v >> 6;
+                }
                 self.ch2.length = 64 - (v & 0x3F) as u16;
             }
             0xFF17 => {
@@ -504,9 +553,23 @@ impl Apu {
             0xFF18 => self.ch2.freq = (self.ch2.freq & 0x700) | v as u16,
             0xFF19 => {
                 self.ch2.freq = (self.ch2.freq & 0xFF) | (((v & 0x07) as u16) << 8);
+                let first_half = self.in_first_half();
+                let next_env = self.next_clocks_env();
+                let prev_en = self.ch2.length_enable;
+                let trigger = v & 0x80 != 0;
                 self.ch2.length_enable = v & 0x40 != 0;
-                if v & 0x80 != 0 {
-                    self.ch2.trigger();
+                if first_half && !prev_en && self.ch2.length_enable && self.ch2.length > 0 {
+                    self.ch2.length -= 1;
+                    if self.ch2.length == 0 && !trigger {
+                        self.ch2.enabled = false;
+                    }
+                }
+                if trigger {
+                    let was_zero = self.ch2.length == 0;
+                    self.ch2.trigger(next_env);
+                    if was_zero && first_half && self.ch2.length_enable && self.ch2.length > 0 {
+                        self.ch2.length -= 1;
+                    }
                 }
             }
             0xFF1A => {
@@ -520,9 +583,22 @@ impl Apu {
             0xFF1D => self.ch3.freq = (self.ch3.freq & 0x700) | v as u16,
             0xFF1E => {
                 self.ch3.freq = (self.ch3.freq & 0xFF) | (((v & 0x07) as u16) << 8);
+                let first_half = self.in_first_half();
+                let prev_en = self.ch3.length_enable;
+                let trigger = v & 0x80 != 0;
                 self.ch3.length_enable = v & 0x40 != 0;
-                if v & 0x80 != 0 {
+                if first_half && !prev_en && self.ch3.length_enable && self.ch3.length > 0 {
+                    self.ch3.length -= 1;
+                    if self.ch3.length == 0 && !trigger {
+                        self.ch3.enabled = false;
+                    }
+                }
+                if trigger {
+                    let was_zero = self.ch3.length == 0;
                     self.ch3.trigger();
+                    if was_zero && first_half && self.ch3.length_enable && self.ch3.length > 0 {
+                        self.ch3.length -= 1;
+                    }
                 }
             }
             0xFF20 => self.ch4.length = 64 - (v & 0x3F) as u16,
@@ -539,9 +615,23 @@ impl Apu {
                 self.ch4.divisor_code = v & 0x07;
             }
             0xFF23 => {
+                let first_half = self.in_first_half();
+                let next_env = self.next_clocks_env();
+                let prev_en = self.ch4.length_enable;
+                let trigger = v & 0x80 != 0;
                 self.ch4.length_enable = v & 0x40 != 0;
-                if v & 0x80 != 0 {
-                    self.ch4.trigger();
+                if first_half && !prev_en && self.ch4.length_enable && self.ch4.length > 0 {
+                    self.ch4.length -= 1;
+                    if self.ch4.length == 0 && !trigger {
+                        self.ch4.enabled = false;
+                    }
+                }
+                if trigger {
+                    let was_zero = self.ch4.length == 0;
+                    self.ch4.trigger(next_env);
+                    if was_zero && first_half && self.ch4.length_enable && self.ch4.length > 0 {
+                        self.ch4.length -= 1;
+                    }
                 }
             }
             0xFF24 => self.nr50 = v,

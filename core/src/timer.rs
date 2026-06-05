@@ -50,14 +50,23 @@ impl Timer {
     }
 
     /// Advance the timer by `t` T-cycles, one cycle at a time so edges are exact.
+    ///
+    /// The bus always ticks in whole M-cycles (4 T) and then performs any CPU
+    /// register write *after* the tick (`tick_write` = `tick()` then `write()`).
+    /// The reload of TIMA from TMA happens on a specific T-cycle inside this
+    /// batch, but the matching CPU write lands at the *end* of the same M-cycle.
+    /// We therefore latch `just_reloaded` for the whole batch: it is true at the
+    /// end of `tick()` iff the TMA->TIMA reload fired anywhere during these 4 T,
+    /// which is exactly "this M-cycle is the reload cycle" as the Mooneye
+    /// `tima_write_reloading` / `tma_write_reloading` tests probe it.
     pub fn tick(&mut self, t: u32) {
+        self.just_reloaded = false;
         for _ in 0..t {
             self.tick_one();
         }
     }
 
     fn tick_one(&mut self) {
-        self.just_reloaded = false;
         self.div = self.div.wrapping_add(1);
         self.detect_edge();
 

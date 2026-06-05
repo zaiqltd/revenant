@@ -156,9 +156,10 @@ pub struct Cartridge {
     ram_bank: usize,
     ram_enabled: bool,
     // MBC1 specifics
-    bank_lo: u8,  // 5 bits
-    bank_hi: u8,  // 2 bits (BANK2)
-    mode: bool,   // MBC1 banking mode
+    bank_lo: u8,    // 5 bits
+    bank_hi: u8,    // 2 bits (BANK2)
+    mode: bool,     // MBC1 banking mode
+    multicart: bool, // MBC1M wiring (4x256KiB multicart): BANK2 shifted to bits 4-5
     // MBC3 RTC
     pub rtc: Rtc,
     rtc_select: Option<u8>, // 0x08..=0x0C when an RTC register is mapped into A000-BFFF
@@ -178,6 +179,7 @@ impl Cartridge {
         };
         let ram = vec![0u8; ram_size.max(if header.has_battery { 0 } else { 0 })];
         let rtc_present = header.has_rtc;
+        let multicart = kind == Kind::Mbc1 && detect_mbc1_multicart(&rom);
         Cartridge {
             rom,
             ram,
@@ -189,6 +191,7 @@ impl Cartridge {
             bank_lo: 1,
             bank_hi: 0,
             mode: false,
+            multicart,
             rtc: Rtc::default(),
             rtc_select: None,
             rtc_present,
@@ -220,8 +223,11 @@ impl Cartridge {
             0x0000..=0x3FFF => {
                 let bank = match self.kind {
                     Kind::Mbc1 if self.mode => {
-                        // In MBC1 advanced mode the high bits select bank 0 region too.
-                        (self.bank_hi as usize) << 5
+                        // In MBC1 advanced mode the high bits select the bank-0 region too.
+                        // Multicarts (MBC1M) wire BANK2 to ROM bits 4-5 (base $00/$10/$20/$30);
+                        // standard carts wire it to bits 5-6 (base $00/$20/$40/$60).
+                        let shift = if self.multicart { 4 } else { 5 };
+                        (self.bank_hi as usize) << shift
                     }
                     _ => 0,
                 };
@@ -244,7 +250,13 @@ impl Cartridge {
             Kind::Mbc1 => {
                 let lo = self.bank_lo as usize & 0x1F;
                 let lo = if lo == 0 { 1 } else { lo };
-                lo | ((self.bank_hi as usize) << 5)
+                if self.multicart {
+                    // MBC1M: only the low 4 bits of BANK1 address ROM (bit 4 ignored),
+                    // and BANK2 occupies bits 4-5 (base $00/$10/$20/$30).
+                    (lo & 0x0F) | ((self.bank_hi as usize) << 4)
+                } else {
+                    lo | ((self.bank_hi as usize) << 5)
+                }
             }
             Kind::Mbc2 => {
                 let b = self.rom_bank & 0x0F;
@@ -389,17 +401,33 @@ impl Cartridge {
     }
 
     fn effective_ram_bank(&self) -> usize {
-        match self.kind {
+        let bank = match self.kind {
             Kind::Mbc1 => {
-                if self.mode {
+                // MODE 1 selects RAM bank via BANK2; MODE 0 is always bank 0.
+                // Multicarts have no external RAM banking (RAM is fixed at bank 0).
+                if self.mode && !self.multicart {
                     self.bank_hi as usize
                 } else {
                     0
                 }
             }
-            Kind::Mbc3 => self.ram_bank & 0x03,
+            Kind::Mbc3 => self.ram_bank & 0x07,
             Kind::Mbc5 => self.ram_bank & 0x0F,
             _ => 0,
+        };
+        // Mask the selected bank to the number of banks actually present so that
+        // selecting an out-of-range bank wraps (aliases) rather than reading open bus.
+        bank & self.ram_bank_mask()
+    }
+
+    /// Mask covering the available 8 KiB external RAM banks (0 when ≤1 bank).
+    fn ram_bank_mask(&self) -> usize {
+        let banks = self.ram.len() / 0x2000;
+        if banks <= 1 {
+            0
+        } else {
+            // RAM bank counts in the cartridge header are powers of two.
+            banks.next_power_of_two() - 1
         }
     }
 
@@ -463,6 +491,36 @@ impl Cartridge {
         self.rtc.l_days_lo = rd(8) as u8;
         self.rtc.l_dh = rd(9) as u8;
     }
+}
+
+/// First 24 bytes of the Nintendo boot logo (enough to identify a header reliably).
+const NINTENDO_LOGO_HEAD: [u8; 24] = [
+    0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00, 0x0D,
+    0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E,
+];
+
+/// Detect an MBC1 multicart (MBC1M): a 1 MiB compilation of four 256 KiB games.
+///
+/// Heuristic (per the mappers spec §2.7): only 1 MiB MBC1 carts qualify, and a
+/// genuine multicart repeats the Nintendo logo at the start of each game base
+/// bank ($00/$10/$20/$30). We require the logo at ≥2 of those four banks, which
+/// distinguishes a multicart from an ordinary 1 MiB game (logo only at bank 0).
+fn detect_mbc1_multicart(rom: &[u8]) -> bool {
+    // Must be exactly 1 MiB (64 banks of 16 KiB) to be a 4×256 KiB multicart.
+    if rom.len() != 64 * 0x4000 {
+        return false;
+    }
+    let mut logo_banks = 0;
+    for base in [0x00usize, 0x10, 0x20, 0x30] {
+        let off = base * 0x4000 + 0x0104;
+        if rom
+            .get(off..off + NINTENDO_LOGO_HEAD.len())
+            .is_some_and(|slice| slice == NINTENDO_LOGO_HEAD)
+        {
+            logo_banks += 1;
+        }
+    }
+    logo_banks >= 2
 }
 
 fn kind_for(t: u8) -> Kind {

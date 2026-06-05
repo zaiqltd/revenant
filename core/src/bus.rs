@@ -33,9 +33,13 @@ pub struct Bus {
 
     // OAM DMA
     dma_active: bool,
+    dma_page: u8,    // last value written to FF46 (read-back)
     dma_source: u16,
     dma_index: u16,
     dma_delay: u8,
+    dma_restart: Option<u8>, // page armed by a write during an active transfer
+    dma_last_byte: u8, // byte the DMA moved this M-cycle (for bus conflicts)
+    dma_conflict: bool, // bus is owned by the DMA this M-cycle (conflict applies to CPU reads)
 
     // HDMA (CGB)
     hdma_src: u16,
@@ -69,9 +73,13 @@ impl Bus {
             boot_rom,
             boot_active,
             dma_active: false,
+            dma_page: 0xFF,
             dma_source: 0,
             dma_index: 0,
             dma_delay: 0,
+            dma_restart: None,
+            dma_last_byte: 0xFF,
+            dma_conflict: false,
             hdma_src: 0,
             hdma_dst: 0x8000,
             hdma_len: 0xFF,
@@ -131,20 +139,64 @@ impl Bus {
     }
 
     fn oam_dma_step(&mut self) {
+        // A pending restart (a write to FF46 while a transfer was already running)
+        // reloads the address counter for a new transfer. It re-incurs a single
+        // 1-cycle restart delay, but — unlike a fresh start — the source bus is NOT
+        // released during that delay: the DMA controller never went idle, so the
+        // bus conflict persists continuously. This is exactly what oam_dma_start
+        // round 2 / oam_dma_restart pin down.
+        if let Some(page) = self.dma_restart.take() {
+            self.dma_page = page;
+            self.dma_source = (page as u16) << 8;
+            self.dma_index = 0;
+            // This apply-cycle IS the restart's single startup-delay M-cycle (it
+            // mirrors a fresh start's M1), so the first byte copies on the *next*
+            // M-cycle — a restart reaches byte 0 with the same 2-cycle latency as a
+            // fresh start. Crucially the source bus is NOT released during it: the
+            // DMA controller never went idle, so the conflict persists continuously.
+            self.dma_delay = 0;
+            self.dma_active = true;
+            self.dma_conflict = true;
+            return;
+        }
+
+        // No byte is moved by default this M-cycle; assume no conflict unless we
+        // copy a byte below.
+        self.dma_conflict = false;
+
         if !self.dma_active {
             return;
         }
         if self.dma_delay > 0 {
+            // Fresh-start startup delay: the source bus is not yet owned by the DMA,
+            // so OAM/other regions stay accessible for this single M-cycle.
             self.dma_delay -= 1;
             return;
         }
         if self.dma_index < 0xA0 {
-            let byte = self.read(self.dma_source + self.dma_index);
+            let byte = self.dma_read(self.dma_source + self.dma_index);
             self.ppu.dma_write_oam(self.dma_index as usize, byte);
+            self.dma_last_byte = byte;
+            self.dma_conflict = true;
             self.dma_index += 1;
         }
         if self.dma_index >= 0xA0 {
             self.dma_active = false;
+        }
+    }
+
+    /// Source read performed by the OAM-DMA engine itself. It ignores CPU access
+    /// rights and reads underlying memory directly.
+    ///
+    /// On DMG/MGB/SGB the DMA source decoder treats every page $E0-$FF as WRAM:
+    /// the whole $E000-$FFFF window is read as echo of $C000-$DFFF (source minus
+    /// $2000). So pages $FE (OAM) and $FF (HRAM/IO) do NOT read OAM/IO — they read
+    /// the upper half of WRAM, exactly as sources-GS verifies. For $E000-$FDFF the
+    /// normal map already echoes WRAM; only $FE00-$FFFF needs the extra fold.
+    fn dma_read(&self, addr: u16) -> u8 {
+        match addr {
+            0xFE00..=0xFFFF => self.read(addr - 0x2000),
+            _ => self.read(addr),
         }
     }
 
@@ -179,7 +231,35 @@ impl Bus {
 
     pub fn tick_read(&mut self, addr: u16) -> u8 {
         self.tick();
+        // OAM-DMA bus conflict. The DMG has two memory buses driven independently:
+        //   * the external bus — cart ROM ($0000-$7FFF) and cart RAM / WRAM / echo
+        //     ($A000-$FDFF);
+        //   * the video bus — VRAM ($8000-$9FFF) and OAM ($FE00-$FE9F).
+        // While a transfer is moving a byte this M-cycle the DMA owns *the bus its
+        // source lives on*. A CPU read on that same bus returns the byte the DMA is
+        // driving (its current source byte) instead of real memory; a read on the
+        // other bus is unaffected. OAM is always being written, so a CPU read of OAM
+        // returns $FF for the whole transfer regardless of which bus the source is
+        // on. HRAM / I/O / IE ($FF00-$FFFF) sit on neither bus and stay accessible.
+        if self.dma_conflict {
+            match addr {
+                0xFF00..=0xFFFF => {}            // HRAM / I/O / IE: always reachable
+                0xFE00..=0xFE9F => return 0xFF,  // OAM: locked by the destination write
+                _ if Self::same_bus(self.dma_source, addr) => return self.dma_last_byte,
+                _ => {}
+            }
+        }
         self.read(addr)
+    }
+
+    /// True when two addresses share the same DMG memory bus, so a DMA reading from
+    /// `src` conflicts with a CPU access to `addr`. Bus B (video) = VRAM + OAM;
+    /// everything else in $0000-$FDFF is Bus A (external/main).
+    fn same_bus(src: u16, addr: u16) -> bool {
+        Self::is_video_bus(src) == Self::is_video_bus(addr)
+    }
+    fn is_video_bus(addr: u16) -> bool {
+        matches!(addr, 0x8000..=0x9FFF | 0xFE00..=0xFEFF)
     }
     pub fn tick_write(&mut self, addr: u16, v: u8) {
         self.tick();
@@ -255,6 +335,7 @@ impl Bus {
             0xFF04..=0xFF07 => self.timer.read(addr),
             0xFF0F => self.intf | 0xE0,
             0xFF10..=0xFF3F => self.apu.read(addr),
+            0xFF46 => self.dma_page, // DMA register reads back the last written page
             0xFF40..=0xFF4B => self.ppu.read_reg(addr),
             0xFF4D => {
                 let mut v = 0x7E;
@@ -328,19 +409,40 @@ impl Bus {
     }
 
     fn start_oam_dma(&mut self, v: u8) {
-        self.dma_source = (v as u16) << 8;
-        self.dma_index = 0;
-        self.dma_active = true;
-        self.dma_delay = 1;
+        self.dma_page = v;
+        if self.dma_active {
+            // A transfer is already running (or in its startup delay): arm a
+            // restart. The current transfer keeps moving its byte this M-cycle;
+            // the new one begins one M-cycle later with a fresh startup delay.
+            self.dma_restart = Some(v);
+        } else {
+            self.dma_source = (v as u16) << 8;
+            self.dma_index = 0;
+            self.dma_active = true;
+            self.dma_delay = 1;
+        }
     }
 
     fn start_hdma(&mut self, v: u8) {
         let len = v & 0x7F;
         if v & 0x80 != 0 {
-            // HBlank DMA
+            // HBlank DMA: one 0x10-byte block is transferred per HBlank (PPU mode 0).
             self.hdma_len = len;
             self.hdma_active = true;
-            self.last_hdma_mode0 = self.ppu.mode == 0;
+            let lcd_on = self.ppu.lcdc & 0x80 != 0;
+            // A block is copied immediately at start when the PPU is already in an
+            // HBlank (mode 0) — the transfer doesn't wait for the *next* HBlank. The
+            // LCD-off case behaves the same way: it copies exactly one block and then
+            // stalls (no further HBlanks ever arrive). Both hdma_mode0 (LCD on, armed
+            // during mode 0) and hdma_lcd_off / gdma_addr_mask (LCD off) verify that
+            // a single block is moved and the counter decrements once.
+            if !lcd_on || self.ppu.mode == 0 {
+                self.hdma_copy_block();
+            }
+            // Seed the HBlank edge tracker as "currently in mode 0" so we do not
+            // copy a second block during the same HBlank; the next copy waits for the
+            // following mode-0 edge.
+            self.last_hdma_mode0 = self.ppu.mode == 0 && lcd_on;
         } else {
             if self.hdma_active {
                 // Writing bit7=0 while active stops an HBlank transfer.

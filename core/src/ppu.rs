@@ -43,11 +43,18 @@ pub struct Ppu {
     // timing
     pub mode: u8,
     dot_in_line: u32,
+    // Physical scanline 0..=153. Distinct from the reported `ly` register, which
+    // wraps 153->0 early on the last VBlank line (the LY=153 quirk).
+    phys_line: u8,
     cur_mode3_len: u32,
     window_line: u8,
     window_active_this_frame: bool,
     stat_line: bool,
     just_enabled: bool,
+    // For one dot at the physical line 153 -> 0 boundary the LYC coincidence is
+    // forced false, so an LYC=0 source produces a *fresh* rising edge at line 0
+    // distinct from the one it already produced during the line-153 early wrap.
+    lyc_suppress: bool,
 
     // selected sprites for current line (OAM byte indices)
     line_sprites: Vec<u8>,
@@ -95,11 +102,13 @@ impl Ppu {
             opri: 0,
             mode: 2,
             dot_in_line: 0,
+            phys_line: 0,
             cur_mode3_len: 172,
             window_line: 0,
             window_active_this_frame: false,
             stat_line: false,
             just_enabled: false,
+            lyc_suppress: false,
             line_sprites: Vec::with_capacity(10),
             vblank_irq: false,
             stat_irq: false,
@@ -109,6 +118,9 @@ impl Ppu {
             bg_priority: [false; W],
         }
     }
+
+    // Toggle for the DMG spurious-STAT-interrupt write bug (see write_reg).
+    const DMG_STAT_WRITE_BUG: bool = true;
 
     fn lcd_on(&self) -> bool {
         self.lcdc & 0x80 != 0
@@ -170,24 +182,55 @@ impl Ppu {
                 let was_on = self.lcd_on();
                 self.lcdc = v;
                 if was_on && !self.lcd_on() {
-                    // Turning the LCD off resets the timing + LY.
+                    // Turning the LCD off resets the timing + LY. STAT mode bits
+                    // read 0 while the LCD is off; the coincidence flag (bit 2) is
+                    // left frozen at whatever it was at the moment of turn-off.
                     self.ly = 0;
+                    self.phys_line = 0;
                     self.dot_in_line = 0;
                     self.mode = 0;
                     self.window_line = 0;
-                    self.stat_line = false;
+                    self.lyc_suppress = false;
+                    self.stat &= !0x03; // mode bits -> 0
+                    // The internal STAT interrupt line is NOT cleared on disable:
+                    // its LYC component stays latched from the frozen coincidence,
+                    // so a later enable only edges if the coincidence *changes*
+                    // (mooneye stat_lyc_onoff). Re-level it without firing an IRQ.
+                    self.prime_stat_line();
                     self.blank_frame();
                 } else if !was_on && self.lcd_on() {
                     self.dot_in_line = 0;
+                    self.phys_line = 0;
                     self.ly = 0;
-                    self.mode = 2;
+                    // The first line after LCD-on reports Mode 0, not Mode 2 (the
+                    // LCD-on quirk: line 0 goes Mode0 -> Mode3 with no Mode 2).
+                    self.mode = 0;
                     self.just_enabled = true;
+                    self.lyc_suppress = false;
                     self.check_lyc();
+                    // Re-evaluate the STAT line: an LY==LYC coincidence that becomes
+                    // true at enable is a genuine rising edge and requests a STAT IRQ
+                    // (mooneye stat_lyc_onoff). If the coincidence was already true
+                    // before disable (its frozen value), there is no edge.
+                    self.update_stat_line();
                 }
             }
             0xFF41 => {
-                // bits 0-2 are read-only; keep bit7
+                // bits 0-2 are read-only; keep bit7. Writes to the enable bits
+                // can create a fresh rising edge of the STAT line, so re-evaluate.
+                if Self::DMG_STAT_WRITE_BUG && self.lcd_on() && !self.cgb {
+                    // DMG STAT write bug: for one write, the enable bits behave as
+                    // if all set ($FF), so any currently-true condition (mode 0/1/2
+                    // or LY==LYC) forces the line high and can fire a spurious IRQ.
+                    let saved = self.stat;
+                    self.stat |= 0x78;
+                    self.update_stat_line();
+                    self.stat = (saved & 0x87) | (v & 0x78);
+                }
                 self.stat = (self.stat & 0x87) | (v & 0x78);
+                if self.lcd_on() {
+                    self.update_stat_line();
+                }
             }
             0xFF42 => self.scy = v,
             0xFF43 => self.scx = v,
@@ -251,14 +294,32 @@ impl Ppu {
         }
     }
 
+    // The reported LY register wraps to 0 early on the last VBlank line: on DMG
+    // LY reads 153 for only ~1 M-cycle at the top of physical line 153, then 0.
+    const LY153_EARLY_WRAP_DOT: u32 = 4;
+
     fn dot(&mut self) {
+        // The one-dot LYC suppression (153->0 boundary) only lasts a single dot;
+        // release it and re-evaluate the coincidence so the line-0 edge can form.
+        if self.lyc_suppress {
+            self.lyc_suppress = false;
+            self.check_lyc();
+        }
+
         self.dot_in_line += 1;
         if self.dot_in_line >= 456 {
             self.dot_in_line = 0;
             self.advance_line();
         }
 
-        if self.ly < 144 {
+        // Apply the LY=153 -> 0 early-wrap quirk: on physical line 153, LY reports
+        // 153 for the first few dots, then 0 for the remainder.
+        if self.phys_line == 153 && self.dot_in_line == Self::LY153_EARLY_WRAP_DOT && self.ly == 153 {
+            self.ly = 0;
+            self.check_lyc();
+        }
+
+        if self.phys_line < 144 {
             if self.dot_in_line == 80 && self.mode != 3 {
                 self.mode = 3;
                 self.oam_scan();
@@ -272,42 +333,64 @@ impl Ppu {
     }
 
     fn advance_line(&mut self) {
-        self.ly = self.ly.wrapping_add(1);
-        if self.ly > 153 {
-            self.ly = 0;
+        let was_153 = self.phys_line == 153;
+        self.phys_line = self.phys_line.wrapping_add(1);
+        if self.phys_line > 153 {
+            self.phys_line = 0;
             self.window_line = 0;
             self.window_active_this_frame = false;
         }
+        // 153 -> 0 leaves the reported LY at 0 (it already wrapped mid-line-153);
+        // force the coincidence false for this dot so LYC=0 re-edges at line 0.
+        self.lyc_suppress = was_153 && self.phys_line == 0;
+        self.ly = self.phys_line;
         self.check_lyc();
 
-        if self.ly == 144 {
+        if self.phys_line == 144 {
             self.mode = 1;
             self.vblank_irq = true;
             self.frame_ready = true;
-        } else if self.ly < 144 {
+        } else if self.phys_line < 144 {
             self.mode = 2;
         }
     }
 
     fn check_lyc(&mut self) {
-        if self.ly == self.lyc {
+        if self.ly == self.lyc && !self.lyc_suppress {
             self.stat |= 0x04;
         } else {
             self.stat &= !0x04;
         }
     }
 
+    /// Compute the current ORed STAT interrupt line from mode + LYC + enables.
+    fn stat_line_now(&self) -> bool {
+        let m = self.mode;
+        // The Mode-2 (OAM) STAT source is also asserted at the very start of line
+        // 144, even though the PPU mode bits read VBlank (mode 1) there. This is
+        // the "OAM interrupt at LY=144" quirk (mooneye vblank_stat_intr).
+        let mode2_cond = m == 2 || (self.phys_line == 144 && self.dot_in_line == 0);
+        (self.stat & 0x08 != 0 && m == 0)
+            || (self.stat & 0x10 != 0 && m == 1)
+            || (self.stat & 0x20 != 0 && mode2_cond)
+            || (self.stat & 0x40 != 0 && (self.stat & 0x04 != 0))
+    }
+
     fn update_stat_line(&mut self) {
         self.stat = (self.stat & 0xFC) | (self.mode & 0x03);
-        let m = self.mode;
-        let line = (self.stat & 0x08 != 0 && m == 0)
-            || (self.stat & 0x10 != 0 && m == 1)
-            || (self.stat & 0x20 != 0 && m == 2)
-            || (self.stat & 0x40 != 0 && (self.stat & 0x04 != 0));
+        let line = self.stat_line_now();
         if line && !self.stat_line {
             self.stat_irq = true;
         }
         self.stat_line = line;
+    }
+
+    /// Latch the STAT line to its current level WITHOUT requesting an interrupt.
+    /// Used when the LCD is enabled: the line may come up high (e.g. LY==LYC), but
+    /// that initial level must not be treated as a fresh rising edge.
+    fn prime_stat_line(&mut self) {
+        self.stat = (self.stat & 0xFC) | (self.mode & 0x03);
+        self.stat_line = self.stat_line_now();
     }
 
     fn compute_mode3_len(&self) -> u32 {

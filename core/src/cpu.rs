@@ -235,12 +235,14 @@ impl Cpu {
         self.internal(bus);
         self.internal(bus);
         let pc = self.pc;
+        // M3: push PC high. If SP-1 == 0xFFFF this write lands on IE itself.
         self.sp = self.sp.wrapping_sub(1);
         self.write8(bus, self.sp, (pc >> 8) as u8);
-        self.sp = self.sp.wrapping_sub(1);
-        self.write8(bus, self.sp, pc as u8);
-        // The vector is decided here; if IE was cleared in the meantime, the
-        // dispatch is cancelled and we jump to 0x0000.
+        // The interrupt vector is latched right after the high-byte push, while
+        // the bus address still points at IE/IF. A write that just modified IE
+        // (high-byte push to 0xFFFF) is therefore visible here, but the upcoming
+        // low-byte push is not — so it cannot cancel an already-decided vector.
+        // (mooneye `ie_push`: high-byte-to-IE can cancel/redirect; low-byte cannot.)
         let pending = bus.pending_interrupts();
         let vector = if pending == 0 {
             0x0000
@@ -249,6 +251,10 @@ impl Cpu {
             bus.intf &= !(1 << bit);
             0x0040 + (bit as u16) * 8
         };
+        // M4: push PC low.
+        self.sp = self.sp.wrapping_sub(1);
+        self.write8(bus, self.sp, pc as u8);
+        // M5: jump to the latched vector.
         self.pc = vector;
         self.internal(bus);
     }

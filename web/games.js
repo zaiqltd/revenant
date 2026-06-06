@@ -30,6 +30,7 @@ export const CATALOG = [
 
 const rev = new Revenant();
 let ready = false;
+let picking = false; // set when a game is chosen, so the thumbnail pass stops touching the wasm
 
 // ---- DOM ----
 const $ = (s) => document.querySelector(s);
@@ -73,6 +74,16 @@ function buildGrid() {
     g._canvas = card.querySelector('.thumbc');
     grid.appendChild(card);
   }
+  // bring-your-own card (always present, independent of thumbnail rendering)
+  const own = document.createElement('label');
+  own.className = 'card own';
+  own.innerHTML = `<div class="thumb byo"><span>+</span></div><div class="cbody">` +
+    `<div class="ctitle">Your ROM</div><div class="cdesc">Load any .gb / .gbc from your device.</div>` +
+    `<div class="cctrl">click or drop a file</div></div><input type="file" accept=".gb,.gbc,.bin" hidden>`;
+  own.querySelector('input').addEventListener('change', async (e) => {
+    const f = e.target.files[0]; if (f) playBytes(new Uint8Array(await f.arrayBuffer()), f.name, 'D-Pad · X/Z · Enter/Shift');
+  });
+  grid.appendChild(own);
 }
 
 // Render each game's title screen into its catalog card (sequential — shares the
@@ -80,8 +91,10 @@ function buildGrid() {
 async function renderThumbs() {
   await boot();
   for (const g of CATALOG) {
+    if (picking) return;            // user picked a game -> stop touching the shared wasm
     try {
       const bytes = new Uint8Array(await (await fetch(g.file)).arrayBuffer());
+      if (picking) return;
       rev.loadRom(bytes);
       for (let i = 0; i < 36; i++) rev.ex.revenant_run_frame(); // settle on the title
       const ptr = rev.ex.revenant_framebuffer_ptr();
@@ -95,16 +108,6 @@ async function renderThumbs() {
     await new Promise((r) => setTimeout(r, 0));
   }
   rev.romLoaded = false; // force a clean (re)load when a game is actually picked
-  // bring-your-own card
-  const own = document.createElement('label');
-  own.className = 'card own';
-  own.innerHTML = `<div class="thumb byo"><span>+</span></div><div class="cbody">` +
-    `<div class="ctitle">Your ROM</div><div class="cdesc">Load any .gb / .gbc from your device.</div>` +
-    `<div class="cctrl">click or drop a file</div></div><input type="file" accept=".gb,.gbc,.bin" hidden>`;
-  own.querySelector('input').addEventListener('change', async (e) => {
-    const f = e.target.files[0]; if (f) playBytes(new Uint8Array(await f.arrayBuffer()), f.name, 'D-Pad · X/Z · Enter/Shift');
-  });
-  grid.appendChild(own);
 }
 
 async function playFromUrl(file, title, controls) {
@@ -115,6 +118,7 @@ async function playFromUrl(file, title, controls) {
 }
 
 async function playBytes(bytes, title, controls) {
+  picking = true;            // stop the thumbnail pass from racing on the shared wasm
   await boot();
   rev.initAudio();
   const cgb = rev.loadRom(bytes);

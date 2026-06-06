@@ -21,6 +21,7 @@ export class Revenant {
     this.buttons = 0;
     this.romLoaded = false;
     this.romKey = null;
+    this.rewinding = false;
     this.sampleRate = 48000;
     this.audioCtx = null;
     this.muted = false;
@@ -52,12 +53,16 @@ export class Revenant {
     const ptr = ex.revenant_input_ptr(romBytes.length);
     this._u8().set(romBytes, ptr);
     this.isCgb = ex.revenant_init(romBytes.length, this.sampleRate) !== 0;
+    ex.revenant_set_recording?.(1); // record a snapshot ring for rewind
     this.romLoaded = true;
     this.romKey = 'rev_save_' + hash32(romBytes);
     this.buttons = 0;
+    this.rewinding = false;
     this._loadBattery();
     return this.isCgb;
   }
+
+  setRewind(on) { this.rewinding = on && this.romLoaded; }
 
   reset() { if (this.romLoaded) this.ex.revenant_reset(); }
 
@@ -152,8 +157,12 @@ export class Revenant {
     this.acc += dt;
     let ran = 0;
     while (this.acc >= FRAME_MS && ran < 4) {
-      this.ex.revenant_run_frame();
-      this._pumpAudio();
+      if (this.rewinding) {
+        this.ex.revenant_rewind_frame();   // step the machine one frame backwards
+      } else {
+        this.ex.revenant_run_frame();
+        this._pumpAudio();
+      }
       this.acc -= FRAME_MS; ran++; this.frames++;
     }
     if (ran > 0) {

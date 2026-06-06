@@ -143,13 +143,27 @@ $('#full')?.addEventListener('click', () => {
   if (!document.fullscreenElement) el.requestFullscreen?.(); else document.exitFullscreen?.();
 });
 
+// rewind (Boss I): hold R or the on-screen ⟲ button to run the game backwards
+const rewindOverlay = $('#rewind-ind');
+function setRewind(on) {
+  rev.setRewind(on);
+  if (rewindOverlay) rewindOverlay.hidden = !rev.rewinding;
+}
+const rewBtn = $('#rewind');
+['mousedown', 'touchstart'].forEach((t) => rewBtn?.addEventListener(t, (e) => { e.preventDefault(); setRewind(true); }));
+['mouseup', 'mouseleave', 'touchend'].forEach((t) => rewBtn?.addEventListener(t, () => setRewind(false)));
+
 // keyboard
 addEventListener('keydown', (e) => {
   if (playerView.hidden) return;
   if (e.code === 'Escape') { backToCatalog(); return; }
+  if (e.code === 'KeyR') { setRewind(true); e.preventDefault(); return; }
   if (e.code in KEYMAP) { rev.setButton(KEYMAP[e.code], true); e.preventDefault(); }
 });
-addEventListener('keyup', (e) => { if (e.code in KEYMAP) { rev.setButton(KEYMAP[e.code], false); e.preventDefault(); } });
+addEventListener('keyup', (e) => {
+  if (e.code === 'KeyR') { setRewind(false); return; }
+  if (e.code in KEYMAP) { rev.setButton(KEYMAP[e.code], false); e.preventDefault(); }
+});
 
 // touch / on-screen buttons (data-btn = joypad bit)
 document.querySelectorAll('[data-btn]').forEach((el) => {

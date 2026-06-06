@@ -31,7 +31,17 @@ pub struct GameBoy {
     rom: Vec<u8>,
     boot_rom: Option<Vec<u8>>,
     sample_rate: u32,
+    // ---- rewind (Boss I) ----
+    // A ring of per-frame machine snapshots. This is *only* possible because the
+    // core is byte-deterministic: a restored state replays frame-perfect. The ROM
+    // is shared via Rc, so each snapshot copies only the mutable state (~100-150 KB),
+    // not the cartridge ROM.
+    history: std::collections::VecDeque<(Cpu, Bus)>,
+    recording: bool,
 }
+
+/// ~10 seconds of rewind at 59.7275 Hz.
+const REWIND_CAP: usize = 600;
 
 impl GameBoy {
     pub fn new(rom: Vec<u8>, boot_rom: Option<Vec<u8>>, sample_rate: u32) -> GameBoy {
@@ -53,6 +63,42 @@ impl GameBoy {
             rom,
             boot_rom,
             sample_rate,
+            history: std::collections::VecDeque::new(),
+            recording: false,
+        }
+    }
+
+    // ---- rewind --------------------------------------------------------------
+
+    /// Turn the per-frame snapshot ring on/off. Disabling clears the buffer.
+    pub fn set_recording(&mut self, on: bool) {
+        self.recording = on;
+        if !on {
+            self.history.clear();
+        }
+    }
+
+    pub fn rewind_len(&self) -> usize {
+        self.history.len()
+    }
+
+    fn capture(&mut self) {
+        if self.history.len() >= REWIND_CAP {
+            self.history.pop_front();
+        }
+        self.history.push_back((self.cpu.clone(), self.bus.clone()));
+    }
+
+    /// Restore the machine to the state one frame earlier (byte-exact). Returns
+    /// false if the rewind buffer is empty.
+    pub fn rewind_frame(&mut self) -> bool {
+        match self.history.pop_back() {
+            Some((c, b)) => {
+                self.cpu = c;
+                self.bus = b;
+                true
+            }
+            None => false,
         }
     }
 
@@ -68,11 +114,15 @@ impl GameBoy {
         }
         self.cpu = fresh.cpu;
         self.bus = fresh.bus;
+        self.history.clear();
     }
 
     /// Run exactly one frame (until the PPU finishes a frame, or a frame's worth
     /// of cycles elapses when the LCD is off).
     pub fn run_frame(&mut self) {
+        if self.recording {
+            self.capture(); // snapshot the state at the start of this frame
+        }
         let start = self.bus.cycles;
         let cap = if self.bus.double_speed {
             CYCLES_PER_FRAME * 2

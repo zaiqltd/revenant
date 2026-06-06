@@ -99,6 +99,24 @@ pub extern "C" fn revenant_set_button(button: u8, pressed: u8) {
     }
 }
 
+// ---- rewind (Boss I) ----------------------------------------------------
+
+#[no_mangle]
+pub extern "C" fn revenant_set_recording(on: u32) {
+    if let Some(g) = gb() {
+        g.set_recording(on != 0);
+    }
+}
+/// Restore the machine one frame back. Returns 1 if a frame was available.
+#[no_mangle]
+pub extern "C" fn revenant_rewind_frame() -> u32 {
+    gb().map(|g| g.rewind_frame() as u32).unwrap_or(0)
+}
+#[no_mangle]
+pub extern "C" fn revenant_rewind_len() -> u32 {
+    gb().map(|g| g.rewind_len() as u32).unwrap_or(0)
+}
+
 // ---- battery save -------------------------------------------------------
 
 #[no_mangle]

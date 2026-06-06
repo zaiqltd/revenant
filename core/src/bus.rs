@@ -9,6 +9,7 @@ use crate::ppu::Ppu;
 use crate::serial::Serial;
 use crate::timer::Timer;
 
+#[derive(Clone)]
 pub struct Bus {
     pub cart: Cartridge,
     pub ppu: Ppu,

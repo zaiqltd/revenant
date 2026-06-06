@@ -4,6 +4,8 @@
 //! deterministic — a hard requirement for rewind and lockstep netplay. One RTC
 //! second elapses every 4_194_304 T-cycles of base clock.
 
+use std::rc::Rc;
+
 pub const T_CYCLES_PER_SECOND: u64 = 4_194_304;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -145,8 +147,11 @@ impl Rtc {
     }
 }
 
+#[derive(Clone)]
 pub struct Cartridge {
-    rom: Vec<u8>,
+    /// Shared (Rc) so per-frame rewind snapshots clone the cart without copying
+    /// the (up to several MiB) ROM — only the mutable RAM/banking state is cloned.
+    rom: Rc<Vec<u8>>,
     ram: Vec<u8>,
     kind: Kind,
     pub header: Header,
@@ -181,7 +186,7 @@ impl Cartridge {
         let rtc_present = header.has_rtc;
         let multicart = kind == Kind::Mbc1 && detect_mbc1_multicart(&rom);
         Cartridge {
-            rom,
+            rom: Rc::new(rom),
             ram,
             kind,
             header,

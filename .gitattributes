@@ -1,0 +1,13 @@
+# Normalize text to LF in the repo; protect binaries and CI shell scripts.
+* text=auto eol=lf
+*.sh    text eol=lf
+*.rs    text eol=lf
+*.js    text eol=lf
+*.mjs   text eol=lf
+*.html  text eol=lf
+*.md    text eol=lf
+*.toml  text eol=lf
+*.png   binary
+*.gb    binary
+*.gbc   binary
+*.wasm  binary

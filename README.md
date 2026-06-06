@@ -40,6 +40,10 @@ Pick a game from the catalog, or drop in any `.gb` / `.gbc` ROM of your own.
 | **Blocks** | Stack the falling blocks; clear full rows. | ← → move · ↓ drop |
 | **Flap** | One-button flap through the gaps. | A / ↑ |
 | **Blaster** | Shoot the wave before it lands. | ← → move · A fire |
+| **Pong** | Rally against a beatable CPU — first to seven. | ↑ ↓ paddle |
+| **Crosser** | Hop across the lanes of traffic without getting hit. | D-Pad |
+| **Maze** | Find the goal through three solvable mazes against the clock. | D-Pad |
+| **Memory** | Watch the growing sequence, then repeat it back. | D-Pad pads |
 | **Dodge** | Weave between falling blocks; survive. | ← → move |
 | **Hello** | A movable smiley — the first thing this emulator drew. | Arrows |
 

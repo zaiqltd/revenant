@@ -13,7 +13,7 @@ jobs:
         with: { targets: wasm32-unknown-unknown }
       - uses: Swatinem/rust-cache@v2
       - name: Build wasm core + game ROMs
-        run: ./web/build.sh
+        run: bash web/build.sh
       - uses: actions/upload-pages-artifact@v3
         with: { path: web }
   deploy:

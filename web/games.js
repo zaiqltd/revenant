@@ -14,6 +14,14 @@ export const CATALOG = [
     desc: 'Flap through the gaps. One tap keeps you airborne.',          controls: 'A / ↑ — flap' },
   { id: 'blaster',  title: 'Blaster',  file: 'blaster.gb',  accent: '#ff6f6f', tag: 'shooter',
     desc: 'Move, shoot, clear the wave before it reaches you.',          controls: '← → move · A fire' },
+  { id: 'pong',     title: 'Pong',     file: 'pong.gb',     accent: '#9dffe0', tag: 'vs cpu',
+    desc: 'Rally against the CPU. First to seven points wins.',          controls: '↑ ↓ — paddle' },
+  { id: 'crosser',  title: 'Crosser',  file: 'crosser.gb',  accent: '#9bff6f', tag: 'arcade',
+    desc: 'Cross the lanes of traffic without getting hit.',             controls: 'D-Pad — hop' },
+  { id: 'maze',     title: 'Maze',     file: 'maze.gb',     accent: '#c0a0ff', tag: 'puzzle',
+    desc: 'Find your way through to the goal.',                          controls: 'D-Pad — move' },
+  { id: 'memory',   title: 'Memory',   file: 'memory.gb',   accent: '#ffd27d', tag: 'brain',
+    desc: 'Watch the sequence, then repeat it back. It grows.',          controls: 'D-Pad — pads' },
   { id: 'dodge',    title: 'Dodge',    file: 'dodge.gb',    accent: '#ffcf5c', tag: 'arcade',
     desc: 'Weave between the falling blocks. Survive as long as you can.', controls: '← → — move' },
   { id: 'mover',    title: 'Hello',    file: 'game.gb',     accent: '#c78dff', tag: 'demo',
@@ -57,12 +65,36 @@ function buildGrid() {
     card.className = 'card';
     card.style.setProperty('--accent', g.accent);
     card.innerHTML =
-      `<div class="thumb" style="--a:${g.accent}"><span>${g.title[0]}</span></div>` +
+      `<div class="thumb" style="--a:${g.accent}"><canvas class="thumbc" width="160" height="144"></canvas>` +
+      `<span class="thumbl">${g.title[0]}</span></div>` +
       `<div class="cbody"><div class="ctitle">${g.title} <i>${g.tag}</i></div>` +
       `<div class="cdesc">${g.desc}</div><div class="cctrl">${g.controls}</div></div>`;
     card.addEventListener('click', () => playFromUrl(g.file, g.title, g.controls));
+    g._canvas = card.querySelector('.thumbc');
     grid.appendChild(card);
   }
+}
+
+// Render each game's title screen into its catalog card (sequential — shares the
+// one wasm instance; runs before the player needs it, and play re-loads anyway).
+async function renderThumbs() {
+  await boot();
+  for (const g of CATALOG) {
+    try {
+      const bytes = new Uint8Array(await (await fetch(g.file)).arrayBuffer());
+      rev.loadRom(bytes);
+      for (let i = 0; i < 36; i++) rev.ex.revenant_run_frame(); // settle on the title
+      const ptr = rev.ex.revenant_framebuffer_ptr();
+      const fb = new Uint8Array(rev.ex.memory.buffer, ptr, 160 * 144 * 4);
+      const tctx = g._canvas.getContext('2d');
+      const im = tctx.createImageData(160, 144);
+      im.data.set(fb);
+      tctx.putImageData(im, 0, 0);
+      g._canvas.classList.add('ready');
+    } catch (_) { /* keep the letter fallback */ }
+    await new Promise((r) => setTimeout(r, 0));
+  }
+  rev.romLoaded = false; // force a clean (re)load when a game is actually picked
   // bring-your-own card
   const own = document.createElement('label');
   own.className = 'card own';
@@ -102,6 +134,10 @@ $('#reset').addEventListener('click', () => rev.reset());
 $('#pause').addEventListener('click', () => { $('#pause').textContent = rev.togglePause() ? 'Pause' : 'Resume'; });
 const muteBtn = $('#mute');
 muteBtn.addEventListener('click', () => { const m = !rev.muted; rev.setMuted(m); muteBtn.textContent = m ? '🔇' : '🔊'; });
+$('#full')?.addEventListener('click', () => {
+  const el = $('#lcdwrap');
+  if (!document.fullscreenElement) el.requestFullscreen?.(); else document.exitFullscreen?.();
+});
 
 // keyboard
 addEventListener('keydown', (e) => {
@@ -127,10 +163,10 @@ document.querySelectorAll('[data-btn]').forEach((el) => {
     .then((b) => playBytes(new Uint8Array(b), e.dataTransfer.files[0].name, 'D-Pad · X/Z · Enter/Shift'));
 }));
 
-// optional ?rom=<file> deep link
+// build the catalog, render live title-screen thumbnails, honour ?rom= deep links
 buildGrid();
-boot();
 (async () => {
   const r = new URLSearchParams(location.search).get('rom');
-  if (r) { const g = CATALOG.find((x) => x.file === r); playFromUrl(r, g?.title || r, g?.controls || ''); }
+  if (r) { await boot(); const g = CATALOG.find((x) => x.file === r); playFromUrl(r, g?.title || r, g?.controls || ''); }
+  else { await renderThumbs(); }
 })();

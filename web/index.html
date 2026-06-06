@@ -27,11 +27,15 @@
           transition:border-color .15s, transform .08s; }
   .card:hover { border-color:var(--accent,--accent2); transform:translateY(-2px); }
   .card:active { transform:translateY(0); }
-  .thumb { width:54px; height:54px; flex:none; border-radius:10px; display:grid; place-items:center;
+  .thumb { position:relative; width:74px; height:67px; flex:none; border-radius:9px; overflow:hidden;
+           display:grid; place-items:center;
            background:linear-gradient(150deg, color-mix(in srgb, var(--a,#7dff9b) 35%, #0e141b), #0e141b);
            border:1px solid var(--edge); }
-  .thumb span { font-size:26px; font-weight:800; color:var(--a,#7dff9b); }
-  .thumb.byo { background:#0e141b; } .thumb.byo span { color:var(--accent2); }
+  .thumbc { width:100%; height:100%; image-rendering:pixelated; opacity:0; transition:opacity .3s; }
+  .thumbc.ready { opacity:1; }
+  .thumbl { position:absolute; font-size:26px; font-weight:800; color:var(--a,#7dff9b); }
+  .thumbc.ready ~ .thumbl { display:none; }
+  .thumb.byo { background:#0e141b; } .thumb.byo span { font-size:26px; font-weight:800; color:var(--accent2); }
   .ctitle { font-weight:700; color:#eef4fb; }
   .ctitle i { font-style:normal; color:var(--dim); font-size:10px; border:1px solid var(--edge);
               padding:1px 6px; border-radius:10px; margin-left:6px; vertical-align:1px; }
@@ -91,7 +95,8 @@
   <header>
     <h1>REVE<b>NANT</b></h1>
     <span class="sub">a from-scratch, gate-level-accurate Game Boy · Rust → WebAssembly</span>
-    <a class="badge" id="badge" href="https://github.com" target="_blank" rel="noopener">acid2 pixel-perfect · 130/279 gates</a>
+    <a class="badge" href="https://zaiq.co.za" target="_blank" rel="noopener" style="margin-left:auto">by ZAIQ</a>
+    <a class="badge" id="badge" href="https://zaiq.co.za" target="_blank" rel="noopener" style="margin-left:8px">acid2 pixel-perfect · 130/279 gates</a>
   </header>
 
   <!-- CATALOG -->
@@ -110,10 +115,11 @@
       <button class="btn" id="pause">Pause</button>
       <button class="btn" id="reset">Reset</button>
       <button class="btn" id="mute">🔊</button>
+      <button class="btn" id="full" title="Fullscreen">⛶</button>
     </div>
     <div class="stage">
       <div class="lcd-card">
-        <div class="lcd-frame"><div class="lcd"><canvas id="screen" width="160" height="144" tabindex="0"></canvas></div></div>
+        <div class="lcd-frame" id="lcdwrap"><div class="lcd"><canvas id="screen" width="160" height="144" tabindex="0"></canvas></div></div>
         <div class="pad">
           <div class="dpad">
             <div></div><div class="k" data-btn="2">▲</div><div></div>
@@ -145,6 +151,11 @@
     (<b>acid2 renders pixel-perfect</b>), a 4-channel APU, MBC1/2/3/5 + RTC, CGB double-speed &amp; HDMA.
     Identical input → byte-identical frames. &nbsp;·&nbsp; Run locally: <code>./web/build.sh &amp;&amp;
     cd web &amp;&amp; python -m http.server 8080</code>.
+    <div style="margin-top:14px; padding-top:12px; border-top:1px solid var(--edge);">
+      Crafted by <a href="https://zaiq.co.za" target="_blank" rel="noopener"><b>ZAIQ</b></a>
+      — <a href="https://zaiq.co.za" target="_blank" rel="noopener">zaiq.co.za</a>.
+      All games are original homebrew; the emulator core is MIT-licensed.
+    </div>
   </footer>
 </div>
 <script type="module" src="./games.js"></script>

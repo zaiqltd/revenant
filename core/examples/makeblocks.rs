@@ -335,7 +335,9 @@ fn main() {
     a.push_bc();
     a.call("cell_addr"); // HL = &GRID[B,C]
     a.ld_a_hl().ld_r_r(D, A); // D = tile value (0 or T_BLOCK)
+    a.push_de(); // map_addr clobbers D (uses DE), so preserve the tile value
     a.call("map_addr"); // HL = map addr for (B,C)
+    a.pop_de(); // restore D = tile value
     a.ld_r_r(A, D).ld_hl_a(); // write tile to VRAM
     a.pop_bc();
     a.inc_r(C).ld_r_r(A, C).cp(COLS).jr(C_JR, "rw_col");

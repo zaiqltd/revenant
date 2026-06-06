@@ -55,8 +55,8 @@ const BY_MAX: u8 = 16 + 136; // floor (screen y 136; bird is 8px tall)
 
 const TICKS_PER_STEP: u8 = 3; // logic runs every 3 frames (~20 Hz) -> calm pace
 const PIPE_START_X: u8 = 21; // recycle column (just past the 20-wide screen)
-const GAPH: u8 = 7; // gap height in tiles (7*8 = 56px) — generous/forgiving
-const GAP_MIN: u8 = 2; // gap top row (gap then spans GAP_MIN..+7 randomly)
+const GAPH: u8 = 8; // gap height in tiles (8*8 = 64px) — generous/forgiving
+const GAP_MIN: u8 = 4; // gap top row; gap spans GAP_MIN..GAP_MIN+RANGE (+GAPH)
 
 // The bird's tile row at its current Y (screen y / 8). Used for tile-grid
 // collision against pipe columns.
@@ -154,7 +154,7 @@ fn main() {
     a.ld_a(5).ld_nn_a(P_GAP[0]);
     a.xor_aa().ld_nn_a(P_SCORED[0]);
     a.ld_a(PIPE_START_X + 11).ld_nn_a(P_X[1]); // 11 columns behind pipe 0
-    a.ld_a(8).ld_nn_a(P_GAP[1]);
+    a.ld_a(6).ld_nn_a(P_GAP[1]);
     a.xor_aa().ld_nn_a(P_SCORED[1]);
 
     a.ld_a(1).ld_nn_a(STATE);
@@ -230,6 +230,7 @@ fn main() {
     for i in 0..2 {
         let recyc = a.uniq("recyc");
         let done = a.uniq("scdone");
+        let gpok = a.uniq("gprng_ok");
         a.ld_a_nn(P_X[i]);
         a.cp(0).jr(Z_JR, &recyc); // X==0 -> off the left edge, recycle
         a.dec_r(A).ld_nn_a(P_X[i]);
@@ -238,8 +239,13 @@ fn main() {
         // recycle to the far right with a new random gap
         a.ld_a(PIPE_START_X).ld_nn_a(P_X[i]);
         a.call("rng");
-        // gap in GAP_MIN..GAP_MAX
-        a.and_a(0x07).add_a(GAP_MIN).ld_nn_a(P_GAP[i]); // 0..7 + MIN -> 2..9 (<=MAX)
+        // gap top in GAP_MIN..GAP_MIN+5 so the whole gap (GAPH tall) stays on the
+        // 18-row screen and is reachable from the bird's mid-screen flight band.
+        a.and_a(0x07); // 0..7
+        a.cp(6).jr(C_JR, &gpok); // clamp 6,7 -> 5 (range 0..5)
+        a.ld_a(5);
+        a.label(&gpok);
+        a.add_a(GAP_MIN).ld_nn_a(P_GAP[i]); // top 4..9, gap rows top..top+7 (12..16 bottom)
         a.xor_aa().ld_nn_a(P_SCORED[i]); // can score again
         a.label(&done);
     }

@@ -2,6 +2,8 @@
 
 **A from-scratch, gate-level-accurate Game Boy / Game Boy Color emulator — Rust → WebAssembly — with a playable in-browser arcade.**
 
+> Built by **[ZAIQ](https://zaiq.co.za)** — [zaiq.co.za](https://zaiq.co.za)
+
 Every chip is written by hand, no emulation libraries: a T-cycle-stepped SM83 CPU, a true **pixel-FIFO PPU**, a 4-channel APU, the cartridge mappers (MBC1/2/3/5 + a real-time clock), and full Game Boy Color support (double-speed, HDMA, palettes). The goal isn’t “it runs Pokémon” — it’s **sub-instruction accuracy**: emulating the machine on its 4.194304 MHz clock faithfully enough to pass the console’s own hardware torture-test ROMs.
 
 > **acid2 renders pixel-perfect** (0 / 23040 pixels different from real hardware, on both DMG and CGB) and the suite currently passes **130 / 279** of the canonical accuracy gates. The full scoreboard lives in [`SCORECARD.md`](SCORECARD.md).
